@@ -19,6 +19,7 @@ Three tools are released together in this toolkit.
 * `falign`. The alignment tool.
 * `falign_ngf`. Another alignment tool. It is used for benchmark only.
 * `u4falign`. A utility for manipulating `SAM` or `PAF` mapping results.
+* The directory `supplementary_source_code` contains scripts for generating simulated Pore-C reads and analyzing mapping results.
 
 # <a name="S-installation"></a> Installation
 
