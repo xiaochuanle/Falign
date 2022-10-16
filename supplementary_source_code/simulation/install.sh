@@ -122,7 +122,7 @@ else
         rm -f ${ENV_PATH}/bin/deactivate && ln -s ${CONDA_PATH}/bin/deactivate ${ENV_PATH}/bin/deactivate
 fi
 echo "Custom scripts:"
-echo "${PATH}/DeepSimulator/deep_simulator.PoreC.sh"
-echo "${PATH}/DeepSimulator/util/Csim_matchup.py"
+echo "${PWD}/DeepSimulator/deep_simulator.PoreC.sh"
+echo "${PWD}/DeepSimulator/util/Csim_matchup.py"
 echo ""
 echo "Installation finished."
