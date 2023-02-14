@@ -9,7 +9,7 @@
 
 # <a name="S-current-version"></a> Current Version
 
-'0.0.2'
+`0.0.2`
 
 # <a name="S-introduction"></a> Introduction
 
@@ -170,7 +170,7 @@ In the example above, the read `0cd79600-51cf-4255-a6f7-0e9660721e85` contains f
 
 Some tools such as whatshap taking `BAM` format as input will complain if there exist too many duplicate read names. In this case we suggest transfer `read-SAM` to `frag-SAM`. In `frag-SAM` every fragment is treadted as an individual read. We can use the `sam2frag-sam` command in the `u4falign` to transfer `read-SAM` to `frag-SAM`:
 ```shell
-$ u4falign sam2frag-sam map.sam frag-map.sam
+$ u4falign sam2frag-sam map.sam > frag-map.sam
 ```
 After transformation, we have
 ```shell
