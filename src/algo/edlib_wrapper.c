@@ -351,7 +351,8 @@ edlib_nw_dist(EdlibAlignData* data,
     int query_size,
 	const u8* target,
     int target_size,
-    int tolerance)
+    int tolerance,
+    int* score)
 {
     if (query_size == 0 || target_size == 0) return 1;
 
@@ -386,5 +387,8 @@ edlib_nw_dist(EdlibAlignData* data,
     hbn_assert(align.numLocations);
     edlibFreeAlignResult(align);
     if (align.numLocations == 0) return -1;
+    if (score) {
+        *score = ((query_size + target_size) / 2 - align.editDistance) * 2 - align.editDistance * 5;
+    }
     return align.editDistance;
 }

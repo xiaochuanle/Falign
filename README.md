@@ -7,6 +7,10 @@
 * [Use `u4falign` for manipulating alignment results](#S-u4falign)
 * [Difference between `read-SAM` and `frag-SAM`](#S-sam-diff)
 
+# <a name="S-current-version"></a> Current Version
+
+'0.0.2'
+
 # <a name="S-introduction"></a> Introduction
 
 `Falign` is a sequence alignment toolkit for long noisy chromosome conformation capture (3C) reads, such as Pore-C.
@@ -26,14 +30,14 @@ Three tools are released together in this toolkit.
 ## <a name="SS-download"></a> Download files
 
 ```shell
-$ git clones https://github.com/xiaochuanle/Falign.git
+$ git clone https://github.com/xiaochuanle/Falign.git
 ```
 
 ## <a name="SS-install-from-binary"></a> Install from executable binaries
 
 ```shell
 $ cd Falign/release
-$ tar xzvf Falign-0.0.1-20221010-Linux-amd64.tar.gz
+$ tar xzvf Falign-0.0.2-20230213-Linux-amd64.tar.gz
 $ cd Falign/Linux-amd64/bin/
 $ export PATH=$PATH:$(pwd)
 ```

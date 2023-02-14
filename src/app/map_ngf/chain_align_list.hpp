@@ -28,6 +28,7 @@ typedef struct {
 
     int map_q;
     double pi;
+    int score;
     int chain_score;
 } PoreCAlign;
 
@@ -44,6 +45,7 @@ typedef struct {
         (__pca).enzyme_qoff, (__pca).enzyme_qend); \
     output_func(stream, " s_enzyme = [%d, %d]", \
         (__pca).enzyme_soff, (__pca).enzyme_send); \
+    output_func(stream, ", score = %d", (__pca).score); \
     output_func(stream, ", %g\n", (__pca).pi); \
 } while(0)
 
@@ -58,6 +60,7 @@ typedef struct {
         (__pca).sid, (__pca).soff, (__pca).send); \
     output_func(stream, " s_enzyme = [%d, %d]", \
         (__pca).enzyme_soff, (__pca).enzyme_send); \
+    output_func(stream, ", score = %d", (__pca).score); \
     output_func(stream, ", %g\n", (__pca).pi); \
 } while(0)
 
@@ -97,6 +100,7 @@ struct pca_chain_dp_point {
     int pca_a_idx;
     int q_cov;
     size_t s_dist;
+    int score;
     void* parent;
 };
 
@@ -105,6 +109,8 @@ struct pca_support {
     int has_successor;
     int succ_offset;
     int succ_cnt;
+    int prec_offset;
+    int prec_cnt;
 } ;
 
 struct pca_supports {

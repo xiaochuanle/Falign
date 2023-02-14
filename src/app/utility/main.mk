@@ -7,7 +7,9 @@ endif
 
 TARGET   := u4falign
 SOURCES  := frag_id.cpp \
+            filter_paf.cpp \
             frag_sam_main.cpp \
+            frag_stats.cpp \
             main.cpp \
             paf_reader.cpp \
             paf2pwc_main.cpp \

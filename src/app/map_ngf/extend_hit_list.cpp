@@ -10,7 +10,7 @@ static const int kExtendBlock = 50;
 static const int kMaxExtendBlock = 90;
 static const int kMaxW = 50;
 static const double kEpsilon = 0.2;
-static const int kEnzymeNbhd = 35;
+static const int kEnzymeNbhd = 30;
 
 static BOOL 
 chain_seed_list_is_contained_in_align(const frag_align_struct* align_list,
@@ -401,12 +401,45 @@ refine_pi_for_one_pca(HbnTracebackData* tbck_data,
     const u8* s = subject + pca->soff;
     int sl = pca->send - pca->soff;
     int dist = max(ql, sl) * 0.5;
-    int x = edlib_nw_dist(tbck_data->edlib, q, ql, s, sl, dist);
+
+#if 1
+    int x = edlib_nw_dist(tbck_data->edlib, q, ql, s, sl, dist, &pca->score);
     if (x == -1) return FALSE;
 
     double pi = 100.0 * (1.0 - 2.0 * x / (ql + sl));
     pca->pi = pi;
     return TRUE;
+#else
+    int qb, qe, sb, se;
+    double pi;
+int r = 
+    nw_ksw2_extd2(tbck_data->ksw,
+        0,
+        q,
+        0,
+        ql,
+        ql,
+        0,
+        s, 
+        0,
+        sl,
+        sl,
+        10,
+        0.0,
+        dist,
+        &qb,
+        &qe,
+        &sb,
+        &se,
+        &pi,
+        &tbck_data->qabuf,
+        &tbck_data->sabuf);
+    const char* qas = ks_s(tbck_data->qabuf);
+    const char* sas = ks_s(tbck_data->sabuf);
+    int as_size = ks_size(tbck_data->qabuf);
+    pca->pi = calc_ident_perc(qas, sas, as_size, NULL, &pca->score);
+    return TRUE;
+#endif 
 }
 
 struct enzyme_offset {
@@ -838,6 +871,7 @@ s_fix_enzyme_align_ends(const int query_id,
     vector<enzyme_offset> leop_list;
     s_add_start_offset_pairs(tbck_data, reloci_list, qvep_list, query, subject, query_dir, subject_id, tbck_data->qoff, tbck_data->soff, b_qend, b_send, leop_list);
 
+    //fprintf(stderr, "==============\n");
     //HbnTracebackDataDump(fprintf, stderr, tbck_data);
     //HBN_LOG("left enzyme offset pairs:");
     //for (auto& eop : leop_list) eop.dump(stderr, "\t"); fprintf(stderr, "\n");
@@ -964,8 +998,8 @@ extend_hit_list(HbnTracebackData* tbck_data,
             int y = query_size - hit.qbeg;
             hit.qbeg = x;
             hit.qend = y;
-            hit_list.push_back(hit);
         }
+        hit_list.push_back(hit);
     }
     sort(hit_list.begin(), hit_list.end(), [](const HbnInitHit& a, const HbnInitHit& b) { return (a.sid < b.sid) || (a.sid == b.sid && a.qbeg < b.qbeg); });
     for (int i = 0; i < hitc; ++i) {

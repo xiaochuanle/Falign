@@ -881,6 +881,7 @@ s_dump_one_pca(HbnTracebackData* tbck_data,
     kstring_t* out)
 {
     PoreCAlign* pca = &tpca->pca;
+//if (tpca->pca.map_q < 5) return 0;
     const char* subject_name = SeqReader_SeqName(subjects, pca->sid);
     const int subject_size = SeqReader_SeqSize(subjects, pca->sid);
     ksprintf(out, "%s", query_name);

@@ -66,7 +66,8 @@ edlib_nw_dist(EdlibAlignData* data,
     int query_size,
 	const u8* target,
     int target_size,
-    int tolerance);
+    int tolerance,
+    int* score);
 
 #ifdef __cplusplus
 }

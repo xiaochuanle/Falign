@@ -11,7 +11,7 @@ extern "C" {
 #define HBN_PACKAGE_NAME                    "necat"
 #define HBN_PACKAGE_VERSION_MAJOR           0
 #define HBN_PACKAGE_VERSION_MINOR           0
-#define HBN_PACKAGE_VERSION_PATCH           1
+#define HBN_PACKAGE_VERSION_PATCH           2
 #define HBN_PACKAGE_CONFIG                  ""
 
 #define HBN_PACKAGE_VERSION_STRINGIFY(x)    #x

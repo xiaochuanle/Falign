@@ -179,15 +179,17 @@ s_gf_p2_left_most_extend(PoreCAlign* pca,
         qfrag.clear(); for (int i = 1; i <= qblk; ++i) qfrag.push_back(read[pca->qoff-i]);
         sfrag.clear(); for (int i = 1; i <= sblk; ++i) sfrag.push_back(subject[pca->soff-i]);
         //fprintf(stderr, "lme 1 qf = %d, sf = %d, qblk = %d, sblk = %d\n", pca->qoff, pca->soff, qblk, sblk);
-        if (qblk > 5000 || sblk > 5000) fprintf(stderr, "lme 1 qf = %d, sf = %d, qblk = %d, sblk = %d\n", pca->qoff, pca->soff, qblk, sblk);
+        //if (qblk > 5000 || sblk > 5000) fprintf(stderr, "lme 1 qf = %d, sf = %d, qblk = %d, sblk = %d\n", pca->qoff, pca->soff, qblk, sblk);
+        if (qblk > 300 || sblk > 300) return false;
         int qfae = 0, sfae = 0;
         edlib_shw(tbck_data->edlib, qfrag.data(), qblk, sfrag.data(), sblk, &qfae, &sfae, qabuf, sabuf);
         //HBN_LOG("LM fix"); dump_chain_pca(fprintf, stderr, *pca, -1);
         pca->qoff -= qfae;
         pca->chain_qoff = pca->qoff;
         pca->soff -= sfae;
+        if (pca->qoff == 0) pca->enzyme_qoff = pca->qoff;
         //fprintf(stderr, "into\t"); dump_chain_pca(fprintf, stderr, *pca, -1);
-	return true;
+	    return true;
     } else {
         int qt = pca->qend;
         int st = pca->send;
@@ -196,7 +198,8 @@ s_gf_p2_left_most_extend(PoreCAlign* pca,
         int qblk = min(ds + 50, dq);
         int sblk = min(dq + 50, ds);
         //HBN_LOG("lme2 qt = %d, qblk = %d, st = %d, sblk = %d, qsize = %d, ssize = %d", qt, qblk, st, sblk, pca->qsize, pca->ssize);
-        if (qblk > 5000 || sblk > 5000)HBN_LOG("lme2 qt = %d, qblk = %d, st = %d, sblk = %d, qsize = %d, ssize = %d", qt, qblk, st, sblk, pca->qsize, pca->ssize);
+        //if (qblk > 5000 || sblk > 5000)HBN_LOG("lme2 qt = %d, qblk = %d, st = %d, sblk = %d, qsize = %d, ssize = %d", qt, qblk, st, sblk, pca->qsize, pca->ssize);
+        if (qblk > 300 || sblk > 300) return false;
         //HBN_LOG("RM fix"); dump_chain_pca(fprintf, stderr, *pca, -1);
         int qfae = 0, sfae = 0;
         edlib_shw(tbck_data->edlib, read + qt, qblk, subject + st, sblk, &qfae, &sfae, qabuf, sabuf);
@@ -207,8 +210,9 @@ s_gf_p2_left_most_extend(PoreCAlign* pca,
         pca->qend = qt;
         pca->chain_qoff = pca->qsize - qt;
         pca->send = st;
+        if (pca->qend == pca->qsize) pca->enzyme_qend = pca->qend;
         //fprintf(stderr, "into\t"); dump_chain_pca(fprintf, stderr, *pca, -1);
-	return true;
+	    return true;
     }
 }
 
@@ -233,9 +237,10 @@ s_gf_p2_right_most_extend(PoreCAlign* pca,
         int ds = pca->ssize - st;
         int qblk = min(ds + 50, dq);
         int sblk = min(dq + 50, ds);
-	if (qblk == 0 || sblk == 0) return false;
+	    if (qblk == 0 || sblk == 0) return false;
         //HBN_LOG("rme1 qt = %d, qblk = %d, st = %d, sblk = %d, qsize = %d, ssize = %d", qt, qblk, st, sblk, pca->qsize, pca->ssize);
-        if (qblk > 5000 || sblk > 5000) HBN_LOG("rme1 qt = %d, qblk = %d, st = %d, sblk = %d, qsize = %d, ssize = %d", qt, qblk, st, sblk, pca->qsize, pca->ssize);
+        //if (qblk > 5000 || sblk > 5000) HBN_LOG("rme1 qt = %d, qblk = %d, st = %d, sblk = %d, qsize = %d, ssize = %d", qt, qblk, st, sblk, pca->qsize, pca->ssize);
+        if (qblk > 300 || sblk > 300) return false;
         //HBN_LOG("RM fix"); dump_chain_pca(fprintf, stderr, *pca, -1);
         int qfae = 0, sfae = 0;
         edlib_shw(tbck_data->edlib, read + qt, qblk, subject + st, sblk, &qfae, &sfae, qabuf, sabuf);
@@ -246,24 +251,27 @@ s_gf_p2_right_most_extend(PoreCAlign* pca,
         pca->qend = qt;
         pca->chain_qend = qt;
         pca->send = st;
+        if (pca->qend == pca->qsize) pca->enzyme_qend = pca->qend;
         //fprintf(stderr, "into\t"); dump_chain_pca(fprintf, stderr, *pca, -1);
-	return true;
+	    return true;
     } else {
         int qblk = min(pca->qoff, pca->soff + 50);
         int sblk = min(pca->qoff + 50, pca->soff);
-	if (qblk == 0 || sblk == 0) return false;
+	    if (qblk == 0 || sblk == 0) return false;
         qfrag.clear(); for (int i = 1; i <= qblk; ++i) qfrag.push_back(read[pca->qoff-i]);
         sfrag.clear(); for (int i = 1; i <= sblk; ++i) sfrag.push_back(subject[pca->soff-i]);
         //fprintf(stderr, "rme2 qf = %d, sf = %d, qblk = %d, sblk = %d\n", pca->qoff, pca->soff, qblk, sblk);
-        if (qblk > 5000 || sblk > 5000)fprintf(stderr, "rme2 qf = %d, sf = %d, qblk = %d, sblk = %d\n", pca->qoff, pca->soff, qblk, sblk);
+        //if (qblk > 5000 || sblk > 5000)fprintf(stderr, "rme2 qf = %d, sf = %d, qblk = %d, sblk = %d\n", pca->qoff, pca->soff, qblk, sblk);
+        if (qblk > 300 || sblk > 300) return false;
         int qfae = 0, sfae = 0;
         edlib_shw(tbck_data->edlib, qfrag.data(), qblk, sfrag.data(), sblk, &qfae, &sfae, qabuf, sabuf);
         //HBN_LOG("RM fix"); dump_chain_pca(fprintf, stderr, *pca, -1);
         pca->qoff -= qfae;
         pca->chain_qend = pca->qsize - pca->qoff;
-        pca->soff -= sfae;     
+        pca->soff -= sfae;   
+        if (pca->qoff == 0) pca->enzyme_qoff = pca->qoff;  
         //fprintf(stderr, "into\t"); dump_chain_pca(fprintf, stderr, *pca, -1);
-	return true;
+	    return true;
     }
 }
 
@@ -306,7 +314,8 @@ smooth_pca_list_pass2(std::vector<PoreCAlign>& chain,
     {
         int qb, qe, eqb, eqe;
         s_gf_p2_set_fwd_read_offsets(pcaa, qb, qe, eqb, eqe, enzyme_size);
-        if (eqb == 0 && qb > 0) s_gf_p2_left_most_extend(pcaa, ref, fwd_read, rev_read, enzyme_size, tbck_data);
+        //fprintf(stderr, "eqb = %d, qb = %d\n", eqb, qb);
+        if ((eqb == 0 && qb > 0) || (qb > 0 && qb < 200)) s_gf_p2_left_most_extend(pcaa, ref, fwd_read, rev_read, enzyme_size, tbck_data);
     }
 
     for (int i = 0; i < pcac - 1; ++i) {
@@ -336,10 +345,15 @@ smooth_pca_list_pass2(std::vector<PoreCAlign>& chain,
     {
         int qb, qe, eqb, eqe;
         s_gf_p2_set_fwd_read_offsets(pcaa + pcac - 1, qb, qe, eqb, eqe, enzyme_size);
-        if (eqe == pcaa[0].qsize && qe != pcaa[0].qsize) s_gf_p2_right_most_extend(pcaa + pcac - 1, ref, fwd_read, rev_read, enzyme_size, tbck_data);
+        //fprintf(stderr, "eqe = %d, qe = %d, qsize = %d\n", eqe, qe, pcaa[0].qsize);
+        bool r = (eqe == pcaa[0].qsize && qe != pcaa[0].qsize) || (qe != pcaa[0].qsize && pcaa[0].qsize - qe < 200);
+        if (r) s_gf_p2_right_most_extend(pcaa + pcac - 1, ref, fwd_read, rev_read, enzyme_size, tbck_data);
     }
 
     chain_type = pca_chain_type(vdfa, vdfc, chain.data(), chain.size());
+    //fprintf(stderr, "after pass2:\n");
+    //for (auto& pca : chain) dump_chain_pca(fprintf, stderr, pca, -1);
+
     //HBN_LOG("chain_type = %s", get_chain_type_name(chain_type));
 }
 
@@ -536,9 +550,9 @@ smooth_pca_list(std::vector<PoreCAlign>& pca_list,
     HbnTracebackData* tbck_data)
 {
     vector<PoreCAlign> fwd_pca_list, rev_pca_list;
-//fprintf(stderr, "======= merging pca list\n");
+    //fprintf(stderr, "======= merging pca list\n");
     for (auto& pca : pca_list) {
-	//dump_chain_pca(fprintf, stderr, pca, -1);
+	    //dump_chain_pca(fprintf, stderr, pca, -1);
         if (pca.qdir == FWD) {
             fwd_pca_list.push_back(pca);
         } else {

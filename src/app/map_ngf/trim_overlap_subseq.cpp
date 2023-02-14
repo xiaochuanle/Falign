@@ -856,9 +856,9 @@ s_dump_sam_pca(HbnTracebackData* tbck_data,
     kputc(tab, out);
     ksprintf(out, "gs:i:%d", tpca->pca.chain_score);
     /// complete map
-    kputc(tab, out);
-    const char* map_type = get_chain_type_name(chain_type);
-    ksprintf(out, "mt:Z:%s", map_type);
+    //kputc(tab, out);
+    //const char* map_type = get_chain_type_name(chain_type);
+    //ksprintf(out, "mt:Z:%s", map_type);
     kputc('\n', out);
 }
 
@@ -881,6 +881,7 @@ s_dump_one_pca(HbnTracebackData* tbck_data,
     kstring_t* out)
 {
     PoreCAlign* pca = &tpca->pca;
+//if (tpca->pca.map_q < 5) return 0;
     const char* subject_name = SeqReader_SeqName(subjects, pca->sid);
     const int subject_size = SeqReader_SeqSize(subjects, pca->sid);
     ksprintf(out, "%s", query_name);
@@ -957,9 +958,9 @@ s_dump_one_pca(HbnTracebackData* tbck_data,
     kputc('\t', out);
     ksprintf(out, "Es:i:%d", extended_subject);
 
-    const char* map_type = get_chain_type_name(chain_type);
-    kputc('\t', out);
-    ksprintf(out, "mt:Z:%s", map_type);
+    //const char* map_type = get_chain_type_name(chain_type);
+    //kputc('\t', out);
+    //ksprintf(out, "mt:Z:%s", map_type);
 
     kputc('\t', out);
     print_paf_cigar(tpca->qoff, tpca->qend, query_size, qas, sas, as_size, out);

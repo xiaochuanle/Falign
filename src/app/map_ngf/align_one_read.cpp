@@ -11,6 +11,8 @@
 
 using namespace std;
 
+static const double kHomProb = 0.75;
+
 typedef struct {
     int sid;
     int max_score;
@@ -30,6 +32,171 @@ s_map_q_p1(EChainType chain_type)
     } else{
         return 0.999;
     }
+}
+
+static void
+s_find_hom_pca(const EChainType chain_type, PoreCAlign* aln, PoreCAlign* all_pca_a, int all_pca_c, vector<PoreCAlign>& hom_pca_list)
+{
+    const double chain_type_prob = s_map_q_p1(chain_type);
+    PoreCAlign* pi = aln;
+    for (int j = 0; j < all_pca_c; ++j) {
+        PoreCAlign* pj = all_pca_a + j;
+	    if (pi->qdir == pj->qdir && pi->qoff == pj->qoff && pi->qend == pj->qend && pi->sid == pj->sid && pi->soff == pj->soff && pi->send == pj->send) {
+			hom_pca_list.push_back(*pj);
+            continue;
+	    }
+
+        if (pi->chain_qoff == pj->chain_qoff && pi->chain_qend == pj->chain_qend) {
+            if (pi->sid == pj->sid && pi->soff <= pj->soff && pi->send > pj->soff) {
+                continue;
+            }
+            if (pi->sid == pj->sid && pj->soff <= pi->soff && pj->send > pi->soff) {
+                continue;
+            }
+
+            hbn_assert(pi->pi > 0.0);
+            double p2 = fabs(1.0 - pj->pi / pi->pi);
+            int map_q =ceil(-10.0 * log(1.0 - chain_type_prob * p2));
+            if (map_q < 5) hom_pca_list.push_back(*pj);
+        }
+    }
+}
+
+static void
+s_pick_hom_pca_kmer(const EChainType chain_type, PoreCAlign* hom_pca_a, int hom_pca_c, PoreCAlign* pca_a, int pca_c, PoreCAlign* result)
+{
+    result->map_q = 0;
+    const double chain_type_prob = s_map_q_p1(chain_type);
+    sort(hom_pca_a, hom_pca_a + hom_pca_c, [](const PoreCAlign& x, const PoreCAlign& y) { return x.chain_score > y.chain_score; });
+    int s0 = hom_pca_a[0].chain_score;
+    int s1 = hom_pca_a[1].chain_score;
+    if (s0 - s1 > 1) {
+        double p2 = fabs(1.0 - 1.0 * s1 / s0);
+        int map_q = ceil(-10.0 * log(1.0 - chain_type_prob * kHomProb * p2));
+#if 0
+            fprintf(stderr, "0 ============= select hom pca %d by chain score\n", supp_list[0].id);
+            for (int x = 0; x < hom_pca_c; ++x) dump_chain_pca(fprintf, stderr, hom_pca_a[x], x);
+            fprintf(stderr, "s0 = %d, s1 = %d, p1 = %g, p2 = %g, p3 = %g, map_q %d\n", s0, s1, chain_type_prob, kHomProb, p2, map_q);
+#endif
+
+        if (map_q > 60) map_q = 60;
+        if (map_q < 0) map_q = 0;
+
+        *result = hom_pca_a[0];
+        result->map_q = map_q;     
+    }
+}
+
+static void
+s_pick_hom_pca_chr(const EChainType chain_type, PoreCAlign* hom_pca_a, int hom_pca_c, PoreCAlign* pca_a, int pca_c, PoreCAlign* result)
+{
+    result->map_q = 0;
+    const double chain_type_prob = s_map_q_p1(chain_type);
+    struct PcaSupportInfo { int id; int supp; };
+    vector<PcaSupportInfo> supp_list(hom_pca_c);
+    for (size_t i = 0; i < hom_pca_c; ++i) { supp_list[i].id = i; supp_list[i].supp = 0; }
+
+    for (int i = 0; i < hom_pca_c; ++i) {
+        PoreCAlign* pi = hom_pca_a + i;
+        for (int j = 0; j < pca_c; ++j) {
+            PoreCAlign* pj = pca_a + j;
+            if (pi->chain_qoff == pj->chain_qoff && pi->chain_qend == pj->chain_qend) continue;
+            if (pj->map_q < 5) continue;
+            if (pi->sid == pj->sid) ++supp_list[i].supp;
+        }
+    }
+    sort(supp_list.begin(), supp_list.end(), [](const PcaSupportInfo& x, const PcaSupportInfo& y) { return x.supp > y.supp; });
+    int cnt0 = supp_list[0].supp;
+    int cnt1 = supp_list[1].supp;
+    if (cnt0 - cnt1 > 1) {
+        double p2 = fabs(1.0 - 1.0 * cnt1 / cnt0);
+        int map_q = ceil(-10.0 * log(1.0 - chain_type_prob * kHomProb * p2));
+#if 0
+        fprintf(stderr, "1 ============= select hom pca %d by chr support\n", supp_list[0].id);
+        for (int x = 0; x < hom_pca_c; ++x) dump_chain_pca(fprintf, stderr, hom_pca_a[x], x);
+        fprintf(stderr, "cnt0 = %d, cnt1 = %d, p1 = %g, p2 = %g, p3 = %g, map_q %d\n", cnt0, cnt1, chain_type_prob, kHomProb, p2, map_q);
+#endif
+
+        if (map_q > 60) map_q = 60;
+        if (map_q < 0) map_q = 0;
+        *result = hom_pca_a[supp_list[0].id];
+        result->map_q = map_q;
+    }
+}
+
+static bool 
+s_pick_hom_list(const EChainType chain_type, PoreCAlign* hom_pca_a, int hom_pca_c, PoreCAlign* pca_a, int pca_c, PoreCAlign* result)
+{
+    PoreCAlign p;
+    int max_map_q = 0;
+
+    s_pick_hom_pca_kmer(chain_type, hom_pca_a, hom_pca_c, pca_a, pca_c, &p);
+    if (p.map_q > max_map_q) {
+        *result = p;
+        max_map_q = p.map_q;
+    }
+
+    s_pick_hom_pca_chr(chain_type, hom_pca_a, hom_pca_c, pca_a, pca_c, &p);
+    if (p.map_q > max_map_q) {
+        *result = p;
+        max_map_q = p.map_q;
+    }
+
+    return max_map_q > 0;
+}
+
+static void
+s_set_map_q_for_hom_pca(PoreCAlign* pca_a, int pca_c, const EChainType chain_type, PoreCAlign* all_pca_a, int all_pca_c)
+{
+    vector<PoreCAlign> hom_pca_list;
+    PoreCAlign pca;
+    for (int i = 0; i < pca_c; ++i) {
+        if (pca_a[i].map_q >= 5) continue;
+        hom_pca_list.clear();
+        s_find_hom_pca(chain_type, pca_a + i, all_pca_a, all_pca_c, hom_pca_list);
+
+        //fprintf(stderr, "---- find %d hom pca\n", hom_pca_list.size()); dump_chain_pca(fprintf, stderr, pca_a[i], i);
+        for (int x = 0; x < hom_pca_list.size(); ++x) {
+            PoreCAlign& hpca = hom_pca_list[x];
+            //fprintf(stderr, "\t"); dump_chain_pca(fprintf, stderr, hpca, x); fprintf(stderr, "chain score = %d\n", hpca.chain_score);
+        }
+
+        if (hom_pca_list.size() < 2) continue;
+        bool x = s_pick_hom_list(chain_type, hom_pca_list.data(), hom_pca_list.size(), pca_a, pca_c, &pca);
+        if (!x) continue;
+        pca.map_q = -pca.map_q;
+        pca_a[i] = pca;
+    }
+    for (int i = 0; i < pca_c; ++i) pca_a[i].map_q = abs(pca_a[i].map_q);
+}
+
+static void
+s_set_hom_pca_idx(PoreCAlign* pca_a, int pca_c, vector<PoreCAlign>& all_pca_list)
+{
+    for (int i = 0; i < pca_c; ++i) pca_a[i].qc = -1;
+    PoreCAlign* apa = all_pca_list.data();
+    int apc = all_pca_list.size();
+    for (int i = 0; i < pca_c; ++i) {
+        PoreCAlign* pi = pca_a + i;
+        double rep_pi = 0.0;
+	    int rep_j = -1;
+        for (int j = 0; j < apc; ++j) {
+            PoreCAlign* pj = apa + j;
+	        if (pi->qdir == pj->qdir && pi->qoff == pj->qoff && pi->qend == pj->qend && pi->sid == pj->sid && pi->soff == pj->soff && pi->send == pj->send) {
+			    continue;
+	        }
+            if (pi->chain_qoff == pj->chain_qoff && pi->chain_qend == pj->chain_qend) {
+                if (pi->sid == pj->sid && pi->soff <= pj->soff && pi->send > pj->soff) {
+                    continue;
+                }
+                if (pi->sid == pj->sid && pj->soff <= pi->soff && pj->send > pi->soff) {
+                    continue;
+                }
+                if (pj->pi > rep_pi) { rep_pi = pj->pi; rep_j = j; }
+            }
+        }
+	    pi->qc = rep_j;
+    }    
 }
 
 static void
@@ -66,6 +233,9 @@ s_set_map_q(EChainType chain_type, PoreCAlign* pca_a, int pca_c, vector<PoreCAli
         pi->map_q = map_q;
 	    pi->qc = rep_j;
     }
+
+    s_set_map_q_for_hom_pca(pca_a, pca_c, chain_type, apa, apc);
+    s_set_hom_pca_idx(pca_a, pca_c, all_pca_list);
 }
 
 ///// end aux functions

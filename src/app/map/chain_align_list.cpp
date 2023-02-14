@@ -669,6 +669,8 @@ pca_supports_setup(pca_supports* support, PoreCAlign* pca_a, int pca_c, const EC
         p->has_successor = FALSE;
         p->succ_offset = 0;
         p->succ_cnt = 0;
+        p->prec_offset = 0;
+        p->prec_cnt = 0;
     }
 
     support->succ_idx_list.clear();
@@ -683,81 +685,44 @@ pca_supports_setup(pca_supports* support, PoreCAlign* pca_a, int pca_c, const EC
                 support->succ_idx_list.push_back(j);
                 ++pi->succ_cnt;
                 pi->has_successor = TRUE;
-                pj->has_precessor = TRUE;
+            }
+        }
+    }
+
+    for (int i = 0; i < pca_c; ++i) {
+        pca_support* pi = &support->supports[i];
+        pi->prec_offset = support->succ_idx_list.size();
+        for (int j = i - 1; j >= 0; --j) {
+            pca_support* pj = &support->supports[j];
+            if (s_is_validate_pca_offset_relations(pca_a + j, pca_a + i, chain_type)) {
+                support->succ_idx_list.push_back(j);
+                ++pi->prec_cnt;
+                pi->has_precessor = TRUE;
             }
         }
     }
 }
 
-bool 
-select_pca_chain(PoreCAlignChainData* pca_chain_data,
+struct FragChainPoint
+{
+    int pca_idx;
+    int score;
+    int qcov;
+    int n_frag;
+    int prev;
+};
+
+void
+s_choose_a_solution(PoreCAlignChainData* pca_chain_data,
     const int* vdfa, 
     const int vdfc, 
-    PoreCAlign* pca_array, 
-    int pca_count, 
+    PoreCAlign* pca_a, 
+    int pca_c, 
     const EChainType chain_type, 
-    std::vector<PoreCAlign>& chain, 
+    std::vector<PoreCAlign>& _chain, 
     int* cov)
 {
-    if (pca_count == 0) return 0;
-    sort(pca_array, pca_array + pca_count, [](const PoreCAlign& a, const PoreCAlign& b)->bool { return a.chain_qoff < b.chain_qoff; });
-
-#if 0
-    HBN_LOG("org pca list");
-    for (int i = 0; i < pca_count; ++i) {
-        dump_chain_pca(fprintf, stderr, pca_array[i], i);
-        //dump_pca(fprintf, stderr, pca_a[i], i);
-    }
-#endif
-
-    vector<PoreCAlign> pca_list;
-    pca_list.insert(pca_list.end(), pca_array, pca_array + pca_count);
-    PoreCAlign* pca_a = pca_list.data();
-    int pca_c = pca_list.size();
-    if (chain_type == eMaxCovChain) {
-        for (int i = 0; i < pca_c; ++i) {
-	    //if (pca_a[i].qend - pca_a[i].qoff >= 500) continue;
-            int ld = abs(pca_a[i].soff - pca_a[i].enzyme_soff) <= 20;
-            int rd = abs(pca_a[i].send - pca_a[i].enzyme_send) <= 20;
-            if (ld || rd) continue;
-            pca_a[i].qid = -1;
-        }
-    }
-    for (int i = 0; i < pca_c; ++i) {
-        PoreCAlign* pi = pca_a + i;
-        if (pi->qid == -1) continue;
-        for (int j = i + 1; j < pca_c; ++j) {
-            PoreCAlign* pj = pca_a + j;
-            if (pj->qid == -1) continue;
-            int r = (pi->chain_qoff == pj->chain_qoff) && (pi->chain_qend == pj->chain_qend);
-            if (!r) continue;
-            if (pi->pi > pj->pi) {
-                pj->qid = -1;
-            } else {
-                *pi = *pj;
-                pj->qid = -1;
-            }
-        }
-    }
-    {
-        int n = 0;
-        for (int i = 0; i < pca_c; ++i) if (pca_a[i].qid >= 0) pca_a[n++] = pca_a[i];
-        pca_list.resize(n);
-    }
-    if (pca_list.empty()) return 0;
-    pca_a = pca_list.data();
-    pca_c = pca_list.size();
-    for (int i = 0; i < pca_c; ++i) {
-        pca_a[i].qc = pca_a[i].chain_qend - pca_a[i].chain_qoff;
-    }
-
-#if 0
-    HBN_LOG("chaining pca list, type = %d", chain_type);
-    for (int i = 0; i < pca_c; ++i) {
-        dump_chain_pca(fprintf, stderr, pca_a[i], i);
-        //dump_pca(fprintf, stderr, pca_a[i], i);
-    }
-#endif
+    if (pca_c == 0) return;
 
     vector<pca_chain_dp_point> dp_p_list(pca_c);
     pca_chain_dp_point* dp_p_a = dp_p_list.data();
@@ -794,7 +759,7 @@ select_pca_chain(PoreCAlignChainData* pca_chain_data,
             max_j = i;
         }
     }
-    chain.clear();
+    vector<PoreCAlign> chain;
     pca_chain_dp_point* p = dp_p_a + max_j;
     PoreCAlignChain _best_chain, *best_chain = &_best_chain;
     while (p) {
@@ -811,10 +776,10 @@ select_pca_chain(PoreCAlignChainData* pca_chain_data,
 
     //HBN_LOG("max_cov = %d, chain_type = %d", max_q_cov, chain_type);
     //for (auto& xpca : chain) dump_chain_pca(fprintf, stderr, xpca, -1);
-    if (!s_is_correct_chain_type(vdfa, vdfc, chain.data(), chain.size(), chain_type)) return false;
+    if (!s_is_correct_chain_type(vdfa, vdfc, chain.data(), chain.size(), chain_type)) return;
 
     const int kMaxQCov = compute_pca_list_q_cov(chain.data(), chain.size());
-    const int query_size = pca_array[0].qsize;
+    const int query_size = pca_a[0].qsize;
     pca_supports_setup(&pca_chain_data->supports, pca_a, pca_c, chain_type);
 
     SmallObjectAlloc* soa = pca_chain_data->dp_point_soa;
@@ -887,7 +852,7 @@ select_pca_chain(PoreCAlignChainData* pca_chain_data,
             }
             memset(curr, 0, sizeof(pca_chain_dp_point));
             SmallocObjactAllocDeallocOne(soa, curr);
-	    if (found_chain == 1000) break;
+	        if (found_chain == 10) break;
             continue;
         }
 
@@ -914,9 +879,192 @@ select_pca_chain(PoreCAlignChainData* pca_chain_data,
             dp_stack.push_back(son);
         }
     }
-    if (best_chain->chain.empty()) return 0;
-    s_fill_pca_list_gaps(pca_array, pca_count, vdfa, vdfc, best_chain->chain, best_chain);
+    if (best_chain->chain.empty()) return;
     chain.assign(best_chain->chain.begin(), best_chain->chain.end());
     *cov = compute_pca_list_q_cov(chain.data(), chain.size());
-    return 1;
+
+    double pi1 = chain.empty() ? 0.0 : compute_pca_list_avg_pi(chain.data(), chain.size());
+    double pi2 = _chain.empty() ? 0.0 : compute_pca_list_avg_pi(_chain.data(), _chain.size());
+    if (pi1 > pi2 + 10.0) _chain.assign(chain.begin(), chain.end());
+}
+
+static bool 
+x_select_pca_chain_by_cov(PoreCAlignChainData* pca_chain_data, PoreCAlign* pca_a, int pca_c, const int* vdfa, const int vdfc, EChainType chain_type, vector<PoreCAlign>& chain)
+{
+    vector<FragChainPoint> fcp_list(pca_c);
+    FragChainPoint* fcp_a = fcp_list.data();
+    for (int i = 0; i < pca_c; ++i) {
+        FragChainPoint* p = fcp_a + i;
+        p->pca_idx = i;
+        p->qcov = pca_a[i].qc;
+        p->score = pca_a[i].score;
+        p->n_frag = 1;
+        p->prev = -1;
+    }
+    for (int i = 0; i < pca_c; ++i) {
+        int max_cov = pca_a[i].qc;
+        int n_frag = 0;
+        int prev = -1;
+        PoreCAlign* pi = pca_a + i;
+        for (int j = i - 1; j >= 0; --j) {
+            PoreCAlign* pj = pca_a + j;
+            if (!s_is_validate_pca_offset_relations(pj, pi, chain_type)) continue;
+            int cov = pi->qc + fcp_a[j].qcov;
+            if (pj->chain_qend > pi->chain_qoff) cov -= (pj->chain_qend - pi->chain_qoff);
+            if (cov > max_cov) {
+                max_cov = cov;
+                n_frag = fcp_a[j].n_frag;
+                prev = j;
+            } else if (max_cov - cov <= 30 && fcp_a[j].n_frag < n_frag) {
+                max_cov = cov;
+                n_frag = fcp_a[j].n_frag;
+                prev = j;
+            }
+        }
+        if (prev >= 0) {
+            fcp_a[i].n_frag = n_frag + 1;
+            fcp_a[i].prev = prev;
+            fcp_a[i].qcov = max_cov;
+        }
+    }
+
+    int max_i = -1, max_cov = 0, n_frag = pca_c + 1;
+    for (int i = 0; i < pca_c; ++i) {
+        if (fcp_a[i].qcov > max_cov) {
+            max_i = i;
+            max_cov = fcp_a[i].qcov;
+            n_frag = fcp_a[i].n_frag;
+        } else if (fcp_a[i].qcov == max_cov && fcp_a[i].n_frag < n_frag) {
+            max_i = i;
+            n_frag = fcp_a[i].n_frag;
+        }
+    }
+
+    chain.clear();
+    int p = max_i;
+    while (p >= 0) {
+        chain.push_back(pca_a[p]);
+        p = fcp_a[p].prev;
+    }
+    reverse(chain.begin(), chain.end());
+    if (!s_is_correct_chain_type(vdfa, vdfc, chain.data(), chain.size(), chain_type)) return false;
+
+    int cov = 0;
+    s_choose_a_solution(pca_chain_data, vdfa, vdfc, pca_a, pca_c, chain_type, chain, &cov);
+    return true;
+}
+
+static bool 
+x_select_pca_chain_greedy(PoreCAlign* pca_a, int pca_c, vector<PoreCAlign>& chain)
+{
+    chain.clear();
+    sort(pca_a, pca_a + pca_c, [](const PoreCAlign& x, const PoreCAlign& y) { return x.qc > y.qc; });
+    for (int i = 0; i < pca_c; ++i) {
+        PoreCAlign* pi = pca_a + i;
+        bool has_overlap = false;
+        for (auto& xp : chain) {
+            if (pi->soff <= xp.soff && pi->send > xp.soff) { has_overlap = true; break; }
+            if (xp.soff <= pi->soff && xp.send > pi->soff) { has_overlap = true; break; }
+            int ovlp = 0;
+            if (pi->chain_qoff <= xp.chain_qoff && pi->chain_qend > xp.chain_qoff) {
+                ovlp = pi->chain_qend - xp.chain_qoff;
+            } else if (xp.chain_qoff <= pi->chain_qoff && xp.chain_qend > pi->chain_qoff) {
+                ovlp = xp.chain_qend - pi->chain_qoff;
+            }
+            if (ovlp > pi->qc * 0.4) { has_overlap = true; break; }
+        }
+        if (!has_overlap) chain.push_back(*pi);
+    }
+    sort(chain.begin(), chain.end(), [](const PoreCAlign& x, const PoreCAlign& y) { return x.chain_qoff < y.chain_qoff; });
+    return true;
+}
+
+bool 
+select_pca_chain(PoreCAlignChainData* pca_chain_data,
+    const int* vdfa, 
+    const int vdfc, 
+    PoreCAlign* pca_array, 
+    int pca_count, 
+    const EChainType chain_type, 
+    std::vector<PoreCAlign>& chain, 
+    int* cov)
+{
+    if (pca_count == 0) return 0;
+    sort(pca_array, pca_array + pca_count, [](const PoreCAlign& a, const PoreCAlign& b)->bool { return a.chain_qoff < b.chain_qoff; });
+
+#if 0
+    HBN_LOG("org pca list");
+    for (int i = 0; i < pca_count; ++i) {
+        dump_chain_pca(fprintf, stderr, pca_array[i], i);
+        //dump_pca(fprintf, stderr, pca_a[i], i);
+    }
+#endif
+
+    vector<PoreCAlign> pca_list;
+    pca_list.insert(pca_list.end(), pca_array, pca_array + pca_count);
+    PoreCAlign* pca_a = pca_list.data();
+    int pca_c = pca_list.size();
+    if (chain_type == eMaxCovChain) {
+        for (int i = 0; i < pca_c; ++i) {
+	    //if (pca_a[i].qend - pca_a[i].qoff >= 500) continue;
+            int ld = abs(pca_a[i].soff - pca_a[i].enzyme_soff) <= 20;
+            int rd = abs(pca_a[i].send - pca_a[i].enzyme_send) <= 20;
+            if (ld || rd) continue;
+            pca_a[i].qid = -1;
+        }
+    }
+    {
+        int n = 0;
+        for (int i = 0; i < pca_c; ++i) if (pca_a[i].qid >= 0) pca_a[n++] = pca_a[i];
+        pca_c = n;
+    }
+
+#if 1
+    sort(pca_a, pca_a + pca_c, [](const PoreCAlign& x, const PoreCAlign& y) { return x.score > y.score; });
+	const int E1 = 40, E2 = 40;
+    for (int i = 0; i < pca_c; ++i) {
+        PoreCAlign* pi = pca_a + i;
+        if (pi->score < 50) { pi->qid = -1; continue; }
+	if (pi->chain_qend - pi->chain_qoff < 50) { pi->qid = -1; continue; }
+        if (pi->qid == -1) continue;
+        for (int j = i + 1; j < pca_c; ++j) {
+            PoreCAlign* pj = pca_a + j;
+            if (pj->qid == -1) continue;
+            bool r = abs(pi->chain_qoff - pj->chain_qoff) <= E1 && pj->chain_qend <= pi->chain_qend + E2;
+            if (r) {
+                pj->qid = -1;
+                continue;
+            }
+            r = abs(pi->chain_qend - pj->chain_qend) <= E1 && pj->chain_qoff + E2 >= pi->chain_qoff;
+            if (r) {
+                pj->qid = -1;
+                continue;
+            }
+        }
+    }
+    {
+        int n = 0;
+        for (int i = 0; i < pca_c; ++i) if (pca_a[i].qid >= 0) pca_a[n++] = pca_a[i];
+        pca_list.resize(n);
+    }
+    if (pca_list.empty()) return 0;
+    pca_a = pca_list.data();
+    pca_c = pca_list.size();
+    sort(pca_a, pca_a + pca_c, [](const PoreCAlign& a, const PoreCAlign& b)->bool { return a.chain_qoff < b.chain_qoff; });
+#endif
+    for (int i = 0; i < pca_c; ++i) {
+        pca_a[i].qc = pca_a[i].chain_qend - pca_a[i].chain_qoff;
+    }
+
+#if 0
+    HBN_LOG("chaining pca list, type = %d", chain_type);
+    for (int i = 0; i < pca_c; ++i) {
+        dump_chain_pca(fprintf, stderr, pca_a[i], i);
+        //dump_pca(fprintf, stderr, pca_a[i], i);
+    }
+#endif
+
+    if (chain_type == eMaxCovChain) return x_select_pca_chain_greedy(pca_a, pca_c, chain);
+
+    return x_select_pca_chain_by_cov(pca_chain_data, pca_a, pca_c, vdfa, vdfc, chain_type, chain);
 }

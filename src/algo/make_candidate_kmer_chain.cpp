@@ -88,7 +88,7 @@ make_candidate_kmer_chain(const HbnKmerMatch* hkma,
             int d_d = abs(q_d - s_d); // distance difference
             double ddf = fabs(1.0 - 1.0 * q_d / s_d);
             if (ddf > max_ddf) continue;
-            if (d_d > 40) continue;
+            if (d_d > 100) continue;
             int score = score_list[j] + 1;
             if (score > max_score) {
                 max_score = score;

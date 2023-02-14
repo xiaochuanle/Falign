@@ -29,6 +29,8 @@ s_dump_usage(const char* pn)
 int make_frag_sam_main(int argc, char* argv[]);
 int paf_to_pairwise_contact_bed_main(int argc, char* argv[], const char* target);
 int sam_to_pairwise_contact_bed_main(int argc, char* argv[], const char* target);
+int frag_stats_main(int argc, char* argv[]);
+int filter_paf_main(int argc, char* argv[]);
 
 int main(int argc, char* argv[])
 {
@@ -55,6 +57,14 @@ int main(int argc, char* argv[])
 
     if (strcmp(argv[1], "sam2frag-sam") == 0) {
         return make_frag_sam_main(argc, argv);
+    }
+
+    if (strcmp(argv[1], "frag-stats") == 0) {
+        return frag_stats_main(argc, argv);
+    }
+
+    if (strcmp(argv[1], "filter-paf") == 0) {
+        return filter_paf_main(argc, argv);
     }
 
     s_dump_usage(argv[0]);
