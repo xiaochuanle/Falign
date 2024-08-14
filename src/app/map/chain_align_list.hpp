@@ -1,8 +1,7 @@
 #ifndef __CHAIN_ALIGN_LIST_H_
 #define __CHAIN_ALIGN_LIST_H_
 
-#include "../../algo/hbn_traceback.h"
-#include "../../corelib/restrict_enzyme_loci_list.h"
+#include "../../corelib/restrict_enzyme_loci_list.hpp"
 #include "../../corelib/small_object_alloc.h"
 
 #include <vector>

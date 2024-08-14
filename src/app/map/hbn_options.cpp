@@ -1,13 +1,17 @@
-#include "hbn_options.h"
+#include "hbn_options.hpp"
+#include "build_repeat_reference_regions.hpp"
+#include "necat_info.hpp"
+#include "../../corelib/arg_parse.hpp"
 
-#include "../../corelib/cstr_util.h"
-#include "../../corelib/hbn_package_version.h"
-#include "../../ncbi_blast/str_util/ncbistr.hpp"
+#include <cstring>
 
 using namespace std;
 
 static const char* kOutFmtNameList[] = {
     "sam",
+    "frag-sam",
+    "bam",
+    "frag-bam",
     "paf"
 };
 
@@ -31,103 +35,96 @@ EOutputFmt name_to_output_format(const char* name)
     return fmt;
 }
 
-const char* kDefault_QueryBatchSize = "1g";
-const char* kOpt_QueryBatchSize = "query_batch_size";
-
-const char* kOpt_MapUpto = "query_up_to";
-
-const int kMinKmerSize = 8;
-const int kMaxKmerSize = 32;
-const int kDefault_KmerSize = 17;
-const char* kOpt_KmerSize = "kmer_size";
-
-const int kMinKmerWindow = 1;
-const int kDefault_KmerWindow = 5;
-const char* kOpt_KmerWindow = "kmer_window";
-
-const double kMinRepFrac = 0.0;
-const double kMaxRepFrac = 1.0;
-const double kDefault_RepFrac = 0.001;
-const char* kOpt_RepFrac = "rep_frac";
-
-const int kMinMaxKmerOcc = 1;
-const int kDefault_MaxKmerOcc = 200;
-const char* kOpt_MaxKmerOcc = "max_kmer_occ";
-
-const double kMinDDF = 0.0;
-const double kDefault_DDF = 0.20;
-const char* kOpt_DDF = "ddf";
-
-const int kMinKmerDist = 1;
-const int kDefaultKmerDist = 800;
-const char* kOpt_KmerDist = "kmer_dist";
-
-const int kMinChainScore = 0;
-const int kDefaultChainScore = 2;
-const char* kOpt_ChainScore = "chain_score";
-
-const double kMinPercIdentity = 0.0;
-const double kMaxPercIdentity = 100.0;
-const double kDefault_PercIdentity = 75.0;
-const char* kOpt_Perc_Identity = "perc_identity";
-
-const int kMinMaxAlignsPercSubject = 1;
-const int kDefault_MaxAlignsPerSubject = 50;
-const char* kOpt_MaxAlignsPerSubject = "aligns_per_subject";
-
-const int kMinMaxTargetSubjects = 1;
-const int kDefault_MaxTargetSubjects = 3;
-const char* kOpt_MaxTargetSubjects = "target_subjects";
-
-const int kMinNumThreads = 1;
-const int kDefault_NumThreads = 1;
-const char* kOpt_NumThreads = "num_threads";
-
-const EOutputFmt kDefault_OutFmt = eOutputFmt_SAM;
-const char* kOpt_OutFmt = "outfmt";
-
-const int kDefault_DumpByFile = 0;
-const char* kOpt_DumpByFile = "dump_by_file";
-
-const char* kDefault_Output = "-";
-const char* kOpt_Output = "out";
-
-const char* kDefault_OutputDir = NULL;
-const char* kOpt_OutputDir = "out_dir";
-
-const char* kArgHelp = "h";
-const char* kArgFullHelp = "help";
-
 void
-init_options(HbnProgramOptions* opts)
+s_dump_enzyme_names_and_seqs(FILE* out)
 {
-    opts->query_batch_size = datasize_to_u64(kDefault_QueryBatchSize);
-    opts->query_upto = U64_MAX;
-
-    opts->kmer_size = kDefault_KmerSize;
-    opts->kmer_window = kDefault_KmerWindow;
-    opts->rep_frac = kDefault_RepFrac;
-    opts->max_kmer_occ = kDefault_MaxKmerOcc;
-    opts->ddf = kDefault_DDF;
-    opts->kmer_dist =kDefaultKmerDist;
-    opts->chain_score = kDefaultChainScore;
-
-    opts->perc_identity = kDefault_PercIdentity;
-    opts->max_hsps_per_subject = kDefault_MaxAlignsPerSubject;
-    opts->hitlist_size = kDefault_MaxTargetSubjects;
-
-    opts->num_threads = kDefault_NumThreads;
-    opts->outfmt = kDefault_OutFmt;
-    opts->enzyme = NULL;
-    opts->output = kDefault_Output;
+    fprintf(out, "Restriction Enzyme_Name and corresponding Enzyme_Seq:\n");
+    const int L = 20;
+    print_fixed_width_string(out, "Enzyme_Name", L);
+    fprintf(out, "    Enzyme_Seq\n");
+    print_fixed_width_string(out, "DpnII", L);
+    fprintf(out, "    ^GATC\n");
+    print_fixed_width_string(out, "HindIII", L);
+    fprintf(out, "    A^AGCTT\n");
+    print_fixed_width_string(out, "NcoI", L);
+    fprintf(out, "    C^CATGG\n");
+    print_fixed_width_string(out, "NlaIII", L);
+    fprintf(out, "    CATG^\n");
 }
 
-void dump_usage_simple(const char* pn)
+static bool
+s_parse_output_format_option(int argc, char* argv[], int& i, const char* arg_name, EOutputFmt& fmt)
+{
+    if (strcmp(argv[i], arg_name)) return false;
+    if (i >= argc) HBN_ERR("Argument to option '%s' is missing", arg_name);
+    fmt = name_to_output_format(argv[i+1]);
+    if (fmt == eOutputFmt_Invalid) HBN_ERR("Illegal output format '%s'", argv[i+1]);
+    i += 2;
+    return true;
+}
+
+bool HbnProgramOptions::parse(int argc, char* argv[], std::vector<std::string>& query_list)
+{
+    precheck_args(argc, argv);
+    int i = 1;
+    while (i < argc) {
+        bool r = (argv[i][0] != '-') || (argv[i][0] == '-' && strlen(argv[i]) == 1);
+        if (r) break;
+
+        if (parse_data_size_arg_value(argc, argv, i, _query_batch_size, query_batch_size)) continue;
+        if (parse_data_size_arg_value(argc, argv, i, _query_upto, query_upto)) continue;
+
+        if (parse_string_arg_value(argc, argv, i, _repeat_bed, repeat_bed)) continue;
+        if (parse_bool_arg_value(argc, argv, i, _skip_repeat_bed, skip_repeat_bed)) continue;
+        if (parse_int_arg_value(argc, argv, i, _kmer_size, kmer_size)) continue;
+        if (parse_int_arg_value(argc, argv, i, _kmer_window, kmer_window)) continue;
+        if (parse_int_arg_value(argc, argv, i, _max_kmer_occ, max_kmer_occ)) continue;
+        if (parse_real_arg_value(argc, argv, i, _non_repeat_kmer_frac, non_repeat_kmer_frac)) continue;
+        if (parse_real_arg_value(argc, argv, i, _repeat_kmer_frac, repeat_kmer_frac)) continue;
+        if (parse_real_arg_value(argc, argv, i, _ddf, ddf)) continue;
+        if (parse_int_arg_value(argc, argv, i, _kmer_dist, kmer_dist)) continue;
+        if (parse_int_arg_value(argc, argv, i, _chain_score, chain_score)) continue;
+
+        if (parse_string_arg_value(argc, argv, i, _enzyme, enzyme)) continue;
+        if (parse_int_arg_value(argc, argv, i, _ei_num_hits, ei_num_hits)) continue;
+        if (parse_int_arg_value(argc, argv, i, _ei_frag_size, ei_frag_size)) continue;
+        if (parse_int_arg_value(argc, argv, i, _ei_end_dist, ei_end_dist)) continue;
+        if (parse_int_arg_value(argc, argv, i, _ei_flanking_bases, ei_flanking_bases)) continue;
+
+        if (parse_real_arg_value(argc, argv, i, _perc_identity, perc_identity)) continue;
+        if (parse_int_arg_value(argc, argv, i, _max_hsps_per_subject, max_hsps_per_subject)) continue;
+        if (parse_int_arg_value(argc, argv, i, _hitlist_size, hitlist_size)) continue;
+
+        if (parse_string_arg_value(argc, argv, i, _output, output)) continue;
+        if (s_parse_output_format_option(argc, argv, i, _outfmt, outfmt)) continue;
+        if (parse_int_arg_value(argc, argv, i, _num_threads, num_threads)) continue;
+
+        fprintf(stderr, "ERROR: Unrecognised option '%s'\n", argv[i]);
+        return false;
+    }
+
+    if (i >= argc) return false;
+    reference = argv[i];
+    ++i;
+
+    for(; i < argc; ++i) query_list.push_back(argv[i]);
+
+    return !query_list.empty();
+}
+
+void HbnProgramOptions::simple_usage(int argc, char* argv[])
 {
     FILE* out = stderr;
     fprintf(out, "\n");
     fprintf(out, "USAGE\n");
-    fprintf(out, "  %s [OPTIONS] <enzyme_seq> <reference> <read1> [... <readN>]\n", pn);
+
+    fprintf(out, "\n");
+    fprintf(out, "Building reference repeats:\n");
+    fprintf(out, "  %s build-repeat reference repeat-bed\n", argv[0]);
+
+    fprintf(out, "\n");
+    fprintf(out, "Mapping sequencing reads to reference:\n");
+    fprintf(out, "  %s [OPTIONS] <reference> <read1> [... <readN>]\n", argv[0]);
 
     fprintf(out, "\n");
     fprintf(out, "DESCRIPTION\n");
@@ -139,34 +136,20 @@ void dump_usage_simple(const char* pn)
     fprintf(out, "  %s\n", version);
 
     fprintf(out, "\n");
-    fprintf(out, "*** Examples of familiar <enzyme_seq>:\n");
-    const int L = 20;
-    print_fixed_width_string(out, "Enzyme_Name", L);
-    fprintf(out, "    Enzyme_Seq\n");
-    print_fixed_width_string(out, "DpnII", L);
-    fprintf(out, "    ^GATC\n");
-    print_fixed_width_string(out, "HindIII", L);
-    fprintf(out, "    A^AGCTT\n");
-    print_fixed_width_string(out, "NcoI", L);
-    fprintf(out, "    C^CATGG\n");
-    print_fixed_width_string(out, "NlaIII", L);
-    fprintf(out, "    CATG^\n");
-
-    fprintf(out, "\n");
     fprintf(out, "Type option '-help' to see details of optional arguments\n");    
 }
 
-void
-dump_usage_full(const char* pn)
+void HbnProgramOptions::full_usage(int argc, char* argv[])
 {
+    string size;
     FILE* out = stderr;
     fprintf(out, "\n");
     fprintf(out, "USAGE\n");
-    fprintf(out, "  %s [OPTIONS] <enzyme_seq> <reference> <read1> [... <readN>]\n", pn);
+    fprintf(out, "  %s [OPTIONS] <reference> <read1> [... <readN>]\n", argv[0]);
 
     fprintf(out, "\n");
     fprintf(out, "DESCRIPTION\n");
-    fprintf(out, "  PORE-C sequence alignment toolkit\n");
+    fprintf(out, "  Alignment toolkit for long noisy chromosome conformation capture (3C) reads\n");
 
     fprintf(out, "\n");
     fprintf(out, "VERSION\n");
@@ -174,296 +157,115 @@ dump_usage_full(const char* pn)
     fprintf(out, "  %s\n", version);
 
     fprintf(out, "\n");
-    fprintf(out, "*** Examples of familiar <enzyme_seq>:\n");
-    const int L = 20;
-    print_fixed_width_string(out, "Enzyme_Name", L);
-    fprintf(out, "    Enzyme_Seq\n");
-    print_fixed_width_string(out, "DpnII", L);
-    fprintf(out, "    ^GATC\n");
-    print_fixed_width_string(out, "HindIII", L);
-    fprintf(out, "    A^AGCTT\n");
-    print_fixed_width_string(out, "NcoI", L);
-    fprintf(out, "    C^CATGG\n");
-    print_fixed_width_string(out, "NlaIII", L);
-    fprintf(out, "    CATG^\n");
-
-    fprintf(out, "\n");
     fprintf(out, "OPTIONAL ARGUMENTS\n");
 
-    fprintf(out, "  -%s\n", kArgHelp);
+    fprintf(out, "  %s\n", "-h");
     fprintf(out, "    Print USAGE and DESCRIPTION; ignore all other parameters\n");
-    fprintf(out, "  -%s\n", kArgFullHelp);
+    fprintf(out, "  %s\n", "-help");
     fprintf(out, "    Print USAGE, DESCRIPTION and ARGUMENTS; ignore all other parameters\n");
 
     fprintf(out, "\n");
     fprintf(out, "  *** Input sequence options\n");
-    fprintf(out, "  -%s <DataSize>\n", kOpt_QueryBatchSize);
+    fprintf(out, "  %s <DataSize>\n", _query_batch_size);
     fprintf(out, "    Batch size of queries (in bp) processed at one time\n");
-    fprintf(out, "    Default = '%s'\n", kDefault_QueryBatchSize);
-    fprintf(out, "  -%s <DataSize>\n", kOpt_MapUpto);
+    size = NStr::UInt8ToString_DataSize(query_batch_size);
+    fprintf(out, "    Default = '%s'\n", size.c_str());
+    fprintf(out, "  %s <DataSize>\n", _query_upto);
     fprintf(out, "    Map at most this size of queries and skip the rest queries\n");
 
     fprintf(out, "\n");
     fprintf(out, "  *** Candidate detection options\n");
-    fprintf(out, "  -%s <Integer, %d..%d>\n", kOpt_KmerSize, kMinKmerSize, kMaxKmerSize);
+    fprintf(out, "  %s <path>\n", _repeat_bed);
+    fprintf(out, "    A bed file containing reference repeat regions\n");
+    fprintf(out, "    If not provided, repeat regions will be created before mapping\n");
+    fprintf(out, "  %s\n", _skip_repeat_bed);
+    fprintf(out, "    If set, reference repeat regions will not be created and used\n");
+    fprintf(out, "  %s <Integer>\n", _kmer_size);
     fprintf(out, "    Kmer size (length of best perfect match)\n");
-    fprintf(out, "    Default = '%d'\n", kDefault_KmerSize);
-    fprintf(out, "  -%s <Integer, >=%d>\n", kOpt_KmerWindow, kMinKmerWindow);
+    fprintf(out, "    Default = '%d'\n", kmer_size);
+    fprintf(out, "  %s <Integer>\n", _kmer_window);
     fprintf(out, "    Kmer sampling window size in reference sequences\n");
-    fprintf(out, "    Default = '%d'\n", kDefault_KmerWindow);
-    fprintf(out, "  -%s <Real, %g..%g>\n", kOpt_RepFrac, kMinRepFrac, kMaxRepFrac);
-    fprintf(out, "    Filter out this fraction of most frequently occurring kmers\n");
-    fprintf(out, "    Default = '%g'\n", kDefault_RepFrac);
-    fprintf(out, "  -%s <Integer, >=%d>\n", kOpt_KmerDist, kMinKmerDist);
-    fprintf(out, "    Read distance and reference distance between adjacent\n");
-    fprintf(out, "    matched kmers in a chain must not greater than this value\n");
-    fprintf(out, "    Default = '%d'\n", kDefaultKmerDist);
-    fprintf(out, "  -%s <Integer, >=%d>\n", kOpt_MaxKmerOcc, kMinMaxKmerOcc);
+    fprintf(out, "    Default = '%d'\n", kmer_window);
+    fprintf(out, "  %s <Integer>\n", _max_kmer_occ);
     fprintf(out, "    Filter out kmers occuring larger than this value\n");
-    fprintf(out, "    Default = '%d'\n", kDefault_MaxKmerOcc);
-    fprintf(out, "  -%s <Real, >=%g>\n", kOpt_DDF, kMinDDF);
+    fprintf(out, "    Default = '%d'\n", max_kmer_occ);
+    fprintf(out, "  %s <Real>\n", _non_repeat_kmer_frac);
+    fprintf(out, "    Filter out this fraction of most frequently occurring kmers at non-repeat reference regions\n");
+    fprintf(out, "    Default = '%g'\n", non_repeat_kmer_frac);
+    fprintf(out, "  %s <Real>\n", _repeat_kmer_frac);
+    fprintf(out, "    Filter out this fraction of most frequently occurring kmers at repeat reference regions\n");
+    fprintf(out, "    Default = '%g'\n", repeat_kmer_frac);
+    fprintf(out, "  %s <Integer>\n", _kmer_dist);
+    fprintf(out, "    Read and reference distance between adjacent\n");
+    fprintf(out, "    matched kmers in a chain must not greater than this value\n");
+    fprintf(out, "    Default = '%d'\n", kmer_dist);
+    fprintf(out, "  %s <Real>\n", _ddf);
     fprintf(out, "    DDF factor\n");
-    fprintf(out, "    Default = '%g'\n", kDefault_DDF);
-    fprintf(out, "  -%s <Integer, >=%d>\n", kOpt_ChainScore, kMinChainScore);
+    fprintf(out, "    Default = '%g'\n", ddf);
+    fprintf(out, "  %s <Integer>\n", _chain_score);
     fprintf(out, "    Minimum score of alignment candidates\n");
-    fprintf(out, "    Default = '%d'\n", kDefaultChainScore);
+    fprintf(out, "    Default = '%d'\n", chain_score);
+
+    fprintf(out, "\n");
+    fprintf(out, "  *** Restrict enzyme inference options\n");
+    fprintf(out, "  %s <EnzymeSeq>\n", _enzyme);
+    fprintf(out, "    The restrict enzyme used for generating Pore-C reads\n");
+    fprintf(out, "    If provided, the enzyme inference process will be skipped\n");
+    fprintf(out, "    If not provided, a enzyme inference process is performed for each query file\n");
+    s_dump_enzyme_names_and_seqs(stderr);
+    fprintf(out, "  %s <Integer>\n", _ei_num_hits);
+    fprintf(out, "    For each query, consider its INT alignment candidates with highest DDF scores for enzyme inference\n");
+    fprintf(out, "    Default = '%d'\n", ei_num_hits);
+    fprintf(out, "  %s <Integer>\n", _ei_frag_size);
+    fprintf(out, "    Mininum fragment length (bp) considered for enzyme inference\n");
+    fprintf(out, "    Default = '%d'\n", ei_frag_size);
+    fprintf(out, "  %s <Integer>\n", _ei_end_dist);
+    fprintf(out, "    Minimum distance between mapping positions and query ends\n");
+    fprintf(out, "    Default = '%d'\n", ei_end_dist);
+    fprintf(out, "  %s <Integer>\n", _ei_flanking_bases);
+    fprintf(out, "    Looking for restriction enzymes in INT flanking bases of mapping positions\n");
+    fprintf(out, "    Default = '%d'\n", ei_flanking_bases);
 
     fprintf(out, "\n");
     fprintf(out, "  *** Restrict search or results\n");
-    fprintf(out, "  -%s <Real, %g..%g>\n", kOpt_Perc_Identity, kMinPercIdentity, kMaxPercIdentity);
+    fprintf(out, "  %s <Real, 0..100>\n", _perc_identity);
     fprintf(out, "    Minimum percentage of identity of alignments\n");
-    fprintf(out, "    Default = '%g'\n", kDefault_PercIdentity);
-    fprintf(out, "  -%s <Integer, >=%d>\n", kOpt_MaxAlignsPerSubject, kMinMaxAlignsPercSubject);
+    fprintf(out, "    Default = '%g'\n", perc_identity);
+    fprintf(out, "  %s <Integer>\n", _max_hsps_per_subject);
     fprintf(out, "    Maximum number of alignments per reference sequence\n");
-    fprintf(out, "    Deafult = '%d'\n", kDefault_MaxAlignsPerSubject);
-    fprintf(out, "  -%s <Integer, >=%d>\n", kOpt_MaxTargetSubjects, kMinMaxTargetSubjects);
+    fprintf(out, "    Deafult = '%d'\n", max_hsps_per_subject);
+    fprintf(out, "  %s <Integer>\n", _hitlist_size);
     fprintf(out, "    Maximum number of aligned reference sequences to keep\n");
-    fprintf(out, "    Default = '%d'\n", kDefault_MaxTargetSubjects);
+    fprintf(out, "    Default = '%d'\n", hitlist_size);
 
     fprintf(out, "\n");
     fprintf(out, "  *** Miscellaneous options\n");
-    fprintf(out, "  -%s <Integer, >=%d>\n", kOpt_NumThreads, kMinNumThreads);
+    fprintf(out, "  %s <Integer>\n", _num_threads);
     fprintf(out, "    Number of threads (CPUs) to use in the search\n");
-    fprintf(out, "    Default = '%d'\n", kDefault_NumThreads);
-    fprintf(out, "  -%s <String, Permissible values:", kOpt_OutFmt);
+    fprintf(out, "    Default = '%d'\n", num_threads);
+    fprintf(out, "  %s <String, Permissible values:", _outfmt);
     for (int i = 0; i < eOutputFmt_Invalid; ++i) fprintf(out, " '%s'", kOutFmtNameList[i]);
     fprintf(out, ">\n");
     fprintf(out, "    Output format\n");
-    fprintf(out, "    Default = '%s'\n", kOutFmtNameList[kDefault_OutFmt]);
-    fprintf(out, "  -%s\n", kOpt_DumpByFile);
-    fprintf(out, "    Output alignment results of each read file to its own results file\n");
-    fprintf(out, "    Read file 'read.fq.gz' will produce result file 'read.fq.gz.sam' or 'read.fq.gz.paf'\n");
-    fprintf(out, "    Default = %s\n", kDefault_DumpByFile ? "enabled" : "disabled");
-    fprintf(out, "  -%s <Directory>\n", kOpt_OutputDir);
-    fprintf(out, "    Alignment result files will be output into this directory\n");
-    fprintf(out, "    Works only if option '-%s' is enabled\n", kOpt_DumpByFile);
-    fprintf(out, "  -%s <file>\n", kOpt_Output);
+    fprintf(out, "    Default = '%s'\n", kOutFmtNameList[outfmt]);
+    fprintf(out, "  %s <file>\n", _output);
     fprintf(out, "    Output file name.\n");
-    fprintf(out, "    Default = '%s'\n", kDefault_Output);
+    fprintf(out, "    Default = '%s'\n", output);
 }
 
-void
-s_PreCheckCmdLineArgs(int argc, char* argv[])
+void HbnProgramOptions::precheck_args(int argc, char* argv[])
 {
     for (int i = 1; i < argc; ++i) {
-        if (argv[i][0] != '-') continue;
-        if (strcmp(argv[i] + 1, kArgHelp) == 0) {
-            dump_usage_simple(argv[0]);
+        bool r = (argv[i][0] != '-') || (argv[i][0] == '-' && strlen(argv[i]) == 1);
+        if (r) break;
+
+        if (strcmp(argv[i] + 1, "h") == 0) {
+            simple_usage(argc, argv);
             exit(0);
         }
-        if (strcmp(argv[i] + 1, kArgFullHelp) == 0) {
-            dump_usage_full(argv[0]);
+        if (strcmp(argv[i] + 1, "help") == 0) {
+            full_usage(argc, argv);
             exit(0);
         }
     }
-}
-
-BOOL 
-s_argument_is_supplied(int argc, char* argv[], int arg_i, int n_arg)
-{
-    if (arg_i + n_arg >= argc) {
-        HBN_LOG("Mandatory argument to option '%s' is missing\n", argv[arg_i]);
-        return FALSE;
-    }
-    return TRUE;
-}
-
-int parse_arguments(int argc, char* argv[], HbnProgramOptions* opts)
-{
-    s_PreCheckCmdLineArgs(argc, argv);
-    init_options(opts);
-    int i = 1;
-    while (i < argc) {
-        if (argv[i][0] != '-') break;
-
-        if (strcmp(argv[i] + 1, kOpt_QueryBatchSize) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->query_batch_size = NStr::StringToUInt8_DataSize(NStr::CTempString(argv[i+1]));
-            i += 2;
-            continue;
-        }
-
-        if (strcmp(argv[i] + 1, kOpt_MapUpto) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->query_upto = NStr::StringToUInt8_DataSize(NStr::CTempString(argv[i+1]));
-            HBN_LOG("Map at most %s query bases", argv[i+1]);
-            i += 2;
-            continue;            
-        }
-
-        if (strcmp(argv[i] + 1, kOpt_KmerSize) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->kmer_size = NStr::StringToInt(NStr::CTempString(argv[i+1]));
-            if (opts->kmer_size < kMinKmerSize || opts->kmer_size > kMaxKmerSize) {
-                HBN_LOG("Illegal value '%d' to option '%s': must be in range [%d, %d]", opts->kmer_size, argv[i], kMinKmerSize, kMaxKmerSize);
-                abort();
-            }
-            i += 2;
-            continue;
-        }
-
-        if (strcmp(argv[i] + 1, kOpt_KmerWindow) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->kmer_window = NStr::StringToInt(NStr::CTempString(argv[i+1]));
-            if (opts->kmer_window < kMinKmerWindow) {
-                HBN_LOG("Illegal value '%d' to option '%s': must be >=%d", opts->kmer_window, argv[i], kMinKmerWindow);
-                abort();
-            }
-            i += 2;
-            continue;
-        }
-
-        if (strcmp(argv[i] + 1, kOpt_RepFrac) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->rep_frac = NStr::StringToDouble(NStr::CTempString(argv[i+1]));
-            if (opts->rep_frac < kMinRepFrac || opts->rep_frac > kMaxRepFrac) {
-                HBN_LOG("Illegal value '%g' to option '%s': must be in range [%g, %d]", opts->rep_frac, argv[i], kMinRepFrac, kMaxRepFrac);
-                abort();
-            }
-            i += 2;
-            continue;
-        }    
-
-        if (strcmp(argv[i] + 1, kOpt_KmerDist) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->kmer_dist = NStr::StringToInt(NStr::CTempString(argv[i+1]));
-            if (opts->kmer_dist < kMinKmerDist) {
-                HBN_LOG("Illegal value '%d' to option '%s': must be >=%d", opts->kmer_dist, argv[i], kMinKmerDist);
-                abort();
-            }
-            i += 2;
-            continue;
-        }       
-
-        if (strcmp(argv[i] + 1, kOpt_MaxKmerOcc) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->max_kmer_occ = NStr::StringToInt(NStr::CTempString(argv[i+1]));
-            if (opts->max_kmer_occ < kMinMaxKmerOcc) {
-                HBN_LOG("Illegal value '%d' to option '%s': must be >=%d", opts->max_kmer_occ, argv[i], kMinMaxKmerOcc);
-                abort();
-            }
-            i += 2;
-            continue;
-        }
-
-        if (strcmp(argv[i] + 1, kOpt_DDF) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->ddf = NStr::StringToDouble(NStr::CTempString(argv[i+1]));
-            if (opts->ddf < kMinDDF) {
-                HBN_LOG("Illegal value '%g' to option '%s': must be >=%g", opts->ddf, argv[i], kMinDDF);
-                abort();
-            }
-            i += 2;
-            continue;
-        }          
-
-        if (strcmp(argv[i] + 1, kOpt_ChainScore) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->chain_score = NStr::StringToInt(NStr::CTempString(argv[i+1]));
-            if (opts->chain_score < kMinChainScore) {
-                HBN_LOG("Illegal value '%d' to option '%s': must be >=%d", opts->chain_score, argv[i], kMinChainScore);
-                abort();
-            }
-            i += 2;
-            continue;
-        } 
-
-        if (strcmp(argv[i] + 1, kOpt_Perc_Identity) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->perc_identity = NStr::StringToDouble(NStr::CTempString(argv[i+1]));
-            if (opts->perc_identity < kMinPercIdentity || opts->perc_identity > kMaxPercIdentity) {
-                HBN_LOG("Illegal value '%g' to option '%s': must be in range [%g, %g]", opts->perc_identity, argv[i], kMinPercIdentity, kMaxPercIdentity);
-                abort();
-            }
-            i += 2;
-            continue;
-        }
-
-        if (strcmp(argv[i] + 1, kOpt_MaxAlignsPerSubject) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->max_hsps_per_subject = NStr::StringToInt(NStr::CTempString(argv[i+1]));
-            if (opts->max_hsps_per_subject < kMinMaxAlignsPercSubject) {
-                HBN_LOG("Illegal value '%d' to option '%s': must be >=%d", opts->max_hsps_per_subject, argv[i], kMinMaxAlignsPercSubject);
-                abort();
-            }
-            i += 2;
-            continue;
-        }
-
-        if (strcmp(argv[i] + 1, kOpt_MaxTargetSubjects) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->hitlist_size = NStr::StringToInt(NStr::CTempString(argv[i+1]));
-            if (opts->hitlist_size < kMinMaxTargetSubjects) {
-                HBN_LOG("Illegal value '%d' to option '%s': must be >=%d", opts->hitlist_size, argv[i], kMinMaxTargetSubjects);
-                abort();
-            }
-            i += 2;
-            continue;
-        }
-
-        if (strcmp(argv[i] + 1, kOpt_NumThreads) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->num_threads = NStr::StringToInt(NStr::CTempString(argv[i+1]));
-            if (opts->num_threads < kMinNumThreads) {
-                HBN_LOG("Illegal value '%d' to option '%s': must be >=%d", opts->num_threads, argv[i], kMinNumThreads);
-                abort();
-            }
-            i += 2;
-            continue;
-        }
-
-        if (strcmp(argv[i] + 1, kOpt_OutFmt) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->outfmt = name_to_output_format(argv[i+1]);
-            if (opts->outfmt == eOutputFmt_Invalid) HBN_ERR("Illegal output format name '%s'", argv[i+1]);
-            i += 2;
-            continue;
-        }
-
-        if (strcmp(argv[i] + 1, kOpt_DumpByFile) == 0) {
-            opts->dump_by_file = 1;
-            i += 1;
-            continue;
-        }
-
-        if (strcmp(argv[i] + 1, kOpt_OutputDir) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->output_dir = argv[i+1];
-            i += 2;
-            continue;
-        }
-
-        if (strcmp(argv[i] + 1, kOpt_Output) == 0) {
-            if (!s_argument_is_supplied(argc, argv, i, 1)) return 0;
-            opts->output = argv[i+1];
-            i += 2;
-            continue;
-        }
-
-        HBN_LOG("Unrecognised option '%s'", argv[i]);
-        return 0;
-    }
-    if (i + 3 > argc) return 0;
-    opts->enzyme = argv[i];
-    return i + 1;
 }

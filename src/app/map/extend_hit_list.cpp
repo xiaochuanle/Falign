@@ -1,4 +1,5 @@
 #include "extend_hit_list.hpp"
+#include "../../corelib/pdqsort.h"
 
 #include <algorithm>
 #include <cmath>
@@ -80,13 +81,13 @@ overhang_extend(DalignData* dalign,
     const int subject_length,
     int* _qend,
     int* _send,
-    kstring_t* qaln,
-    kstring_t* saln)
+    string& qaln,
+    string& saln)
 {
     *_qend = 0;
     *_send = 0;
-    ks_clear(*qaln);
-    ks_clear(*saln);
+    qaln.clear();
+    saln.clear();
     int qoff, qend, soff, send;
     double ident_perc;
     int r = dalign_align(dalign,
@@ -102,9 +103,7 @@ overhang_extend(DalignData* dalign,
                 &qend,
                 &soff,
                 &send,
-                &ident_perc,
-                NULL,
-                NULL);
+                &ident_perc);
     if (!r) return r;
     hbn_assert(qoff == 0 && soff == 0);
 
@@ -130,8 +129,8 @@ right_extend_align(DalignData* dalign,
     const u8* subject,
     int* send,
     const int subject_length,
-    kstring_t* qabuf,
-    kstring_t* sabuf,
+    string& qabuf,
+    string& sabuf,
     char** qae,
     char** sae)
 {
@@ -157,13 +156,15 @@ right_extend_align(DalignData* dalign,
     //HBN_LOG("1 qt = %d, qblk = %d, st = %d, sblk = %d, qsize = %d, ssize = %d", qt, qblk, st, sblk, query_length, subject_length);
         int qfae = 0, sfae = 0;
         //edlib_shw(edlib, query + qt, qblk, subject + st, sblk, &qfae, &sfae, qabuf, sabuf);
+        qabuf.clear();
+        sabuf.clear();
         overhang_extend(dalign, edlib, query + qt, qblk, subject + st, sblk, &qfae, &sfae, qabuf, sabuf);
         if (qblk - qfae > 30 || sblk - sfae > 30) done = true;
         int acnt = 0, qcnt = 0, scnt = 0;
-        int as_size = ks_size(*qabuf), k = as_size - 1, m = 0;
+        int as_size = qabuf.size(), k = as_size - 1, m = 0;
         while (k >= 0) {
-            char qc = ks_A(*qabuf, k);
-            char sc = ks_A(*sabuf, k);
+            char qc = qabuf[k];
+            char sc = sabuf[k];
             if (qc != GAP_CHAR) ++qcnt;
             if (sc != GAP_CHAR) ++scnt;
             m = (qc == sc) ? (m+1) : 0;
@@ -194,8 +195,8 @@ right_extend_align(DalignData* dalign,
                 qt += kMatLen;
                 st += kMatLen;
             }
-            memcpy(*qae, ks_s(*qabuf), as_size);
-            memcpy(*sae, ks_s(*sabuf), as_size);
+            memcpy(*qae, qabuf.c_str(), as_size);
+            memcpy(*sae, sabuf.c_str(), as_size);
             *(qae) += as_size;
             *(sae) += as_size;
         }
@@ -214,8 +215,8 @@ left_extend_align(DalignData* dalign,
     int* qoff,
     const u8* subject,
     int* soff,
-    kstring_t* qabuf,
-    kstring_t* sabuf,
+    string& qabuf,
+    string& sabuf,
     char** qas,
     char** sas)
 {
@@ -243,13 +244,15 @@ left_extend_align(DalignData* dalign,
         //fprintf(stderr, "1 qf = %d, sf = %d, qblk = %d, sblk = %d\n", qf, sf, qblk, sblk);
 
         int qfae = 0, sfae = 0;
+        qabuf.clear();
+        sabuf.clear();
         edlib_shw(edlib, qfrag.data(), qblk, sfrag.data(), sblk, &qfae, &sfae, qabuf, sabuf);
         if (qblk - qfae > 30 || sblk - sfae > 30) done = true;
         int acnt = 0, qcnt = 0, scnt = 0;
-        int as_size = ks_size(*qabuf), k = as_size - 1, m = 0;
+        int as_size = qabuf.size(), k = as_size - 1, m = 0;
         while (k >= 0) {
-            char qc = ks_A(*qabuf, k);
-            char sc = ks_A(*sabuf, k);
+            char qc = qabuf[k];
+            char sc = sabuf[k];
             if (qc != GAP_CHAR) ++qcnt;
             if (sc != GAP_CHAR) ++scnt;
             m = (qc == sc) ? (m+1) : 0;
@@ -280,9 +283,9 @@ left_extend_align(DalignData* dalign,
                 sf -= kMatLen;
             }
             for (int i = 0; i < as_size; ++i) {
-                int qc = ks_A(*qabuf, i);
+                int qc = qabuf[i];
                 --(*qas); **qas = qc;
-                int sc = ks_A(*sabuf, i);
+                int sc = sabuf[i];
                 --(*sas); **sas = sc;
             }
         }
@@ -322,7 +325,7 @@ extend_one_chain(const int query_id,
     int as_size = 0;
 
     right_extend_align(tbck_data->dalign, tbck_data->edlib, query, &tbck_data->qend, query_size,
-        subject, &tbck_data->send, subject_size, &tbck_data->ext_qabuf, &tbck_data->ext_sabuf, &tbck_data->qae, &tbck_data->sae);
+        subject, &tbck_data->send, subject_size, tbck_data->ext_qabuf, tbck_data->ext_sabuf, &tbck_data->qae, &tbck_data->sae);
     as_size = data->qae - data->qas;
     validate_aligned_string(HBN_LOG_ARGS_DEFAULT,
         0, query, data->qoff, data->qend, data->qas,
@@ -333,7 +336,7 @@ extend_one_chain(const int query_id,
     hbn_assert(tbck_data->send >= b_send);
 
     left_extend_align(tbck_data->dalign, tbck_data->edlib, query, &tbck_data->qoff, subject, &tbck_data->soff,
-        &tbck_data->ext_qabuf, &tbck_data->ext_sabuf, &tbck_data->qas, &tbck_data->sas);
+        tbck_data->ext_qabuf, tbck_data->ext_sabuf, &tbck_data->qas, &tbck_data->sas);
     as_size = data->qae - data->qas;
     validate_aligned_string(HBN_LOG_ARGS_DEFAULT,
         0, query, data->qoff, data->qend, data->qas,
@@ -488,7 +491,7 @@ s_add_nearby_enzyme_pos(const int* reloci_array,
         offset_list.push_back(reloci_array[i+1]);
         ++i;
     }
-    sort(offset_list.begin(), offset_list.end());
+    pdqsort(offset_list.begin(), offset_list.end());
 }
 
 static bool 
@@ -528,7 +531,7 @@ s_resolve_unfixed_start_offset(HbnTracebackData* tbck_data,
         int qe = 0, se = 0;
         //HBN_LOG("1 qf = %d, qt = %d, sf = %d, st = %d", qf, qt, sf, st);
         overhang_extend(tbck_data->dalign, tbck_data->edlib, qsubseq.data(), qsubseq.size(),
-            ssubseq.data(), ssubseq.size(), &qe, &se, &tbck_data->ext_qabuf, &tbck_data->ext_sabuf);
+            ssubseq.data(), ssubseq.size(), &qe, &se, tbck_data->ext_qabuf, tbck_data->ext_sabuf);
         if (ssubseq.size() != se) return false;
         eop->qoff = tbck_data->qoff + kMatLen - qe;
         hbn_assert(eop->qoff >= 0);
@@ -562,7 +565,7 @@ s_resolve_unfixed_start_offset(HbnTracebackData* tbck_data,
         int qe = 0, se = 0;
         //HBN_LOG("2 qf = %d, qt = %d, sf = %d, st = %d", qf, qt, sf, st);
         overhang_extend(tbck_data->dalign, tbck_data->edlib, qsubseq.data(), qsubseq.size(),
-            ssubseq.data(), ssubseq.size(), &qe, &se, &tbck_data->ext_qabuf, &tbck_data->ext_sabuf);
+            ssubseq.data(), ssubseq.size(), &qe, &se, tbck_data->ext_qabuf, tbck_data->ext_sabuf);
         if (qsubseq.size() != qe) return false;
         eop->soff = tbck_data->soff + kMatLen - se;
         return true;      
@@ -586,10 +589,10 @@ s_add_start_offset_pairs(HbnTracebackData* tbck_data,
 {
     const int* q_reloci_array = (qdir == FWD)
                                 ?
-                                kv_data(qvep_list->fwd_vdf_endpoint_list)
+                                qvep_list->fwd_vdf_endpoint_list.data()
                                 :
-                                kv_data(qvep_list->rev_vdf_endpoint_list);
-    const int q_reloci_cnt = kv_size(qvep_list->rev_vdf_endpoint_list);
+                                qvep_list->rev_vdf_endpoint_list.data();
+    const int q_reloci_cnt = qvep_list->rev_vdf_endpoint_list.size();
     const int* s_reloci_array = reloci_list->reloci_array
                                 +
                                 reloci_list->seq_reloci_info_array[sid].enzyme_loci_offset;
@@ -699,7 +702,7 @@ s_resolve_unfixed_end_offset(HbnTracebackData* tbck_data,
         hbn_assert(qf >= tbck_data->qoff && qf < qt && qt <= query_size);
         int qe = 0, se = 0;
         //HBN_LOG("3 qf = %d, qt = %d, sf = %d, st = %d", qf, qt, sf, st);
-        overhang_extend(tbck_data->dalign, tbck_data->edlib, query + qf, qt - qf, subject + sf, st - sf, &qe, &se, &tbck_data->ext_qabuf, &tbck_data->ext_sabuf);
+        overhang_extend(tbck_data->dalign, tbck_data->edlib, query + qf, qt - qf, subject + sf, st - sf, &qe, &se, tbck_data->ext_qabuf, tbck_data->ext_sabuf);
         if (se != (st - sf)) return 0;
         eop->qoff = tbck_data->qend - kMatLen + qe;
         return true;
@@ -729,7 +732,7 @@ s_resolve_unfixed_end_offset(HbnTracebackData* tbck_data,
         hbn_assert(qf >= tbck_data->qoff && qf < qt && qt <= query_size);
         int qe = 0, se = 0;
         //HBN_LOG("4 qf = %d, qt = %d, sf = %d, st = %d", qf, qt, sf, st);
-        overhang_extend(tbck_data->dalign, tbck_data->edlib, query + qf, qt - qf, subject + sf, st - sf, &qe, &se, &tbck_data->ext_qabuf, &tbck_data->ext_sabuf);
+        overhang_extend(tbck_data->dalign, tbck_data->edlib, query + qf, qt - qf, subject + sf, st - sf, &qe, &se, tbck_data->ext_qabuf, tbck_data->ext_sabuf);
         if (qe != (qt - qf)) return 0;
         eop->soff = tbck_data->send - kMatLen + se;
         return true;
@@ -755,10 +758,10 @@ s_add_end_offset_pairs(HbnTracebackData* tbck_data,
 {
     const int* q_reloci_array = (qdir == FWD)
                                 ?
-                                kv_data(qvep_list->fwd_vdf_endpoint_list)
+                                qvep_list->fwd_vdf_endpoint_list.data()
                                 :
-                                kv_data(qvep_list->rev_vdf_endpoint_list);
-    const int q_reloci_cnt = kv_size(qvep_list->rev_vdf_endpoint_list);
+                                qvep_list->rev_vdf_endpoint_list.data();
+    const int q_reloci_cnt = qvep_list->rev_vdf_endpoint_list.size();
     const int* s_reloci_array = reloci_list->reloci_array
                                 +
                                 reloci_list->seq_reloci_info_array[sid].enzyme_loci_offset;
@@ -858,10 +861,10 @@ s_fix_enzyme_align_ends(const int query_id,
 {
     const int* q_reloci_array = (query_dir == FWD)
                                 ?
-                                kv_data(qvep_list->fwd_vdf_endpoint_list)
+                                qvep_list->fwd_vdf_endpoint_list.data()
                                 :
-                                kv_data(qvep_list->rev_vdf_endpoint_list);
-    const int q_reloci_cnt = kv_size(qvep_list->rev_vdf_endpoint_list);
+                                qvep_list->rev_vdf_endpoint_list.data();
+    const int q_reloci_cnt = qvep_list->rev_vdf_endpoint_list.size();
     const int* s_reloci_array = reloci_list->reloci_array
                                 +
                                 reloci_list->seq_reloci_info_array[subject_id].enzyme_loci_offset;
@@ -920,7 +923,6 @@ s_fix_enzyme_ends(HbnTracebackData* tbck_data,
     const char* query_name,
     const u8* fwd_query,
     const u8* rev_query,
-    const char* query_qv,
     const int query_size,
     const int subject_id,
     const u8* subject,
@@ -939,12 +941,13 @@ s_fix_enzyme_ends(HbnTracebackData* tbck_data,
     const int as_size,
     vector<PoreCAlign>& pca_list)
 {
+    tbck_data->init(qoff, query_size, soff, subject_size);
     tbck_data->qoff = qoff;
     tbck_data->qend = qend;
     tbck_data->soff = soff;
     tbck_data->send = send;
-    tbck_data->qas = ks_s(tbck_data->qabuf) + max<int>(qoff, soff) * 2;
-    tbck_data->sas = ks_s(tbck_data->sabuf) + max<int>(qoff, soff) * 2;
+    tbck_data->qas = tbck_data->qabuf.data() + min<int>(qoff, soff) * 2 + 200;
+    tbck_data->sas = tbck_data->sabuf.data() + min<int>(qoff, soff) * 2 + 200;
     memcpy(tbck_data->qas, qas, as_size);
     tbck_data->qae = tbck_data->qas + as_size;
     memcpy(tbck_data->sas, sas, as_size);
@@ -975,12 +978,11 @@ extend_hit_list(HbnTracebackData* tbck_data,
     const HbnProgramOptions* opts,
     RestrictEnzymeLociList* reloci_list,
     QueryVdfEndPointList* qvep_list,
-    SeqReader* subjects,
+    HbnUnpackedDatabase* subjects,
     const int query_id,
     const char* query_name,
     const u8* fwd_query,
     const u8* rev_query,
-    const char* query_qv,
     const int query_size,
     HbnInitHit* hita,
     int hitc,
@@ -1001,10 +1003,10 @@ extend_hit_list(HbnTracebackData* tbck_data,
         }
         hit_list.push_back(hit);
     }
-    sort(hit_list.begin(), hit_list.end(), [](const HbnInitHit& a, const HbnInitHit& b) { return (a.sid < b.sid) || (a.sid == b.sid && a.qbeg < b.qbeg); });
+    pdqsort(hit_list.begin(), hit_list.end(), [](const HbnInitHit& a, const HbnInitHit& b) { return (a.sid < b.sid) || (a.sid == b.sid && a.qbeg < b.qbeg); });
     for (int i = 0; i < hitc; ++i) {
         HbnInitHit& hit = hit_list[i];
-        const char* sname = SeqReader_SeqName(subjects, hit.sid);
+        const char* sname = subjects->SeqName(hit.sid);
         fprintf(stderr, "%d\t%d:%s\t[%d, %d, %d] x [%d, %d], %d, qsize = %d\n", 
             i, hit.sid, sname, hit.qdir, hit.qbeg, hit.qend, hit.sbeg, hit.send, hit.score, hit.qsize);
     }       
@@ -1012,15 +1014,15 @@ extend_hit_list(HbnTracebackData* tbck_data,
 
     const int verbose = 0;
     frag_align_list_struct align_list;
-    sort(hita, hita + hitc, [](const HbnInitHit& a, const HbnInitHit& b) { return a.score > b.score; });
+    pdqsort(hita, hita + hitc, [](const HbnInitHit& a, const HbnInitHit& b) { return a.score > b.score; });
     fill(cov_stats, cov_stats + query_size, 0);
     int added_align = 0;
     for (int i = 0; i < hitc && added_align < 50; ++i) {
         HbnInitHit* hit = hita + i;
         hita[0].qid = -1;
-        const u8* subject = SeqReader_Seq(subjects, hit->sid, FWD);
-        const int subject_size = SeqReader_SeqSize(subjects, hit->sid);
-        const char* subject_name = SeqReader_SeqName(subjects, hit->sid);
+        const u8* subject = subjects->GetSequence(hit->sid); 
+        const int subject_size = subjects->SeqSize(hit->sid); 
+        const char* subject_name = subjects->SeqName(hit->sid);
         if (chain_seed_list_is_contained_in_align(
                 align_list.frag_align_list.data(), 
                 align_list.frag_align_list.size(),
@@ -1060,9 +1062,9 @@ extend_hit_list(HbnTracebackData* tbck_data,
     for (int i = 0; i < hitc; ++i) {
         HbnInitHit* hit = hita + i;
         if (hit->qid == -1) continue;
-        const u8* subject = SeqReader_Seq(subjects, hit->sid, FWD);
-        const int subject_size = SeqReader_SeqSize(subjects, hit->sid);
-        const char* subject_name = SeqReader_SeqName(subjects, hit->sid);
+        const u8* subject = subjects->GetSequence(hit->sid);
+        const int subject_size = subjects->SeqSize(hit->sid); 
+        const char* subject_name = subjects->SeqName(hit->sid);
         int qoff = hit->qbeg;
         int qend = hit->qend;
         if (hita[i].qdir == REV) {
@@ -1109,7 +1111,7 @@ extend_hit_list(HbnTracebackData* tbck_data,
     int fasc = align_list.frag_align_list.size();
 
 #if 1
-    sort(fasa, fasa + fasc, [](const frag_align_struct& a, const frag_align_struct& b) { return a.ssoff < b.ssoff; });
+    pdqsort(fasa, fasa + fasc, [](const frag_align_struct& a, const frag_align_struct& b) { return a.ssoff < b.ssoff; });
     int score_list[fasc]; for (int i = 0; i < fasc; ++i) score_list[i] = fasa[i].score;
     int pred_list[fasc]; fill(pred_list, pred_list + fasc, -1);
     int succ_list[fasc]; fill(succ_list, succ_list + fasc, 0);
@@ -1147,7 +1149,7 @@ extend_hit_list(HbnTracebackData* tbck_data,
             idx_and_score_list.emplace_back(i, score_list[i]);
         }
     }
-    sort(idx_and_score_list.begin(), 
+    pdqsort(idx_and_score_list.begin(), 
          idx_and_score_list.end(),
          [](const pair<int, int>& a, const pair<int, int>& b)->bool {
              return (a.second > b.second) || (a.second == b.second && a.first < b.first);
@@ -1167,8 +1169,8 @@ extend_hit_list(HbnTracebackData* tbck_data,
         if (colin_align_list.size() < 2) continue;
         int sid = colin_align_list.front().sid;
         int qdir = colin_align_list.front().qdir;
-        const u8* subject = SeqReader_Seq(subjects, sid, FWD);
-        const int subject_size = SeqReader_SeqSize(subjects, sid);
+        const u8* subject = subjects->GetSequence(sid);
+        const int subject_size = subjects->SeqSize(sid);
         HbnInitHit hit;
         hit.qid = query_id;
         hit.qdir = qdir;
@@ -1196,7 +1198,7 @@ extend_hit_list(HbnTracebackData* tbck_data,
 
     fasa = align_list.frag_align_list.data();
     fasc = align_list.frag_align_list.size();
-    sort(fasa, fasa + fasc, [](const frag_align_struct& a, const frag_align_struct& b) { return a.score > b.score; });
+    pdqsort(fasa, fasa + fasc, [](const frag_align_struct& a, const frag_align_struct& b) { return a.score > b.score; });
     //for (int i = 0; i < fasc; ++i) dump_frag_align(fprintf, stderr, fasa[i], i);
     for (int i = 0; i < fasc; ++i) {
         frag_align_struct* fi = fasa + i;
@@ -1231,11 +1233,10 @@ extend_hit_list(HbnTracebackData* tbck_data,
             query_name,
             fwd_query,
             rev_query,
-            query_qv,
             query_size,
             fasa[i].sid,
-            SeqReader_Seq(subjects, fasa[i].sid, FWD),
-            SeqReader_SeqSize(subjects, fasa[i].sid),
+            subjects->GetSequence(fasa[i].sid),
+            subjects->SeqSize(fasa[i].sid),
             fasa[i].bqoff,
             fasa[i].bqend,
             fasa[i].bsoff,
@@ -1287,7 +1288,7 @@ align_subseq(const int query_id,
     int as_size = 0;
 
     right_extend_align(tbck_data->dalign, tbck_data->edlib, query, &tbck_data->qend, query_size,
-        subject, &tbck_data->send, subject_size, &tbck_data->ext_qabuf, &tbck_data->ext_sabuf, &tbck_data->qae, &tbck_data->sae);
+        subject, &tbck_data->send, subject_size, tbck_data->ext_qabuf, tbck_data->ext_sabuf, &tbck_data->qae, &tbck_data->sae);
     as_size = data->qae - data->qas;
     validate_aligned_string(HBN_LOG_ARGS_DEFAULT,
         0, query, data->qoff, data->qend, data->qas,
@@ -1298,7 +1299,7 @@ align_subseq(const int query_id,
     hbn_assert(tbck_data->send >= b_send);
 
     left_extend_align(tbck_data->dalign, tbck_data->edlib, query, &tbck_data->qoff, subject, &tbck_data->soff,
-        &tbck_data->ext_qabuf, &tbck_data->ext_sabuf, &tbck_data->qas, &tbck_data->sas);
+        tbck_data->ext_qabuf, tbck_data->ext_sabuf, &tbck_data->qas, &tbck_data->sas);
     as_size = data->qae - data->qas;
     validate_aligned_string(HBN_LOG_ARGS_DEFAULT,
         0, query, data->qoff, data->qend, data->qas,
@@ -1315,4 +1316,62 @@ align_subseq(const int query_id,
     s_fix_enzyme_align_ends(query_id, query_dir, fwd_query, rev_query, query_size,
         subject_id, subject, subject_size, perc_identity,
         b_qoff, b_qend, b_soff, b_send, chain_score, tbck_data, reloci_list, qvep_list, align_list);
+}
+
+bool
+align_subseq_enzyme_inference(const int query_id,
+    const int query_dir,
+    const u8* fwd_query,
+    const u8* rev_query,
+    const int query_size,
+    const int subject_id,
+    const u8* subject,
+    const int subject_size,
+    const int qb, 
+    const int qe,
+    const int sb,
+    const int se,
+    const double perc_identity,
+    HbnTracebackData* tbck_data)
+{
+    const u8* query = (query_dir == FWD) ? fwd_query : rev_query;
+    int r = porec_compute_traceback(tbck_data, qb, qe, sb, se, query, query_size, subject, subject_size, 20, perc_identity);
+    if (!r) return false;
+    //HbnTracebackDataDump(fprintf, stderr, tbck_data);
+    int b_qoff = tbck_data->qoff;
+    int b_qend = tbck_data->qend;
+    int b_soff = tbck_data->soff;
+    int b_send = tbck_data->send;
+    hbn_assert(b_qend <= query_size, "b_qend = %d, qsize = %d, b_send = %d, ssize = %d", b_qend, query_size, b_send, subject_size);
+    hbn_assert(b_send <= subject_size, "b_qend = %d, qsize = %d, b_send = %d, ssize = %d", b_qend, query_size, b_send, subject_size);
+    HbnTracebackData* data = tbck_data;
+    int as_size = 0;
+
+    right_extend_align(tbck_data->dalign, tbck_data->edlib, query, &tbck_data->qend, query_size,
+        subject, &tbck_data->send, subject_size, tbck_data->ext_qabuf, tbck_data->ext_sabuf, &tbck_data->qae, &tbck_data->sae);
+    as_size = data->qae - data->qas;
+    validate_aligned_string(HBN_LOG_ARGS_DEFAULT,
+        0, query, data->qoff, data->qend, data->qas,
+        0, subject, data->soff, data->send, data->sas,
+        as_size, 1);
+    hbn_assert(tbck_data->qend >= b_qend, "qid = %d, qend = %d, b_qend = %d, send = %d, b_send = %d", query_id, 
+        tbck_data->qend, b_qend, tbck_data->send, b_send);
+    hbn_assert(tbck_data->send >= b_send);
+
+    left_extend_align(tbck_data->dalign, tbck_data->edlib, query, &tbck_data->qoff, subject, &tbck_data->soff,
+        tbck_data->ext_qabuf, tbck_data->ext_sabuf, &tbck_data->qas, &tbck_data->sas);
+    as_size = data->qae - data->qas;
+    validate_aligned_string(HBN_LOG_ARGS_DEFAULT,
+        0, query, data->qoff, data->qend, data->qas,
+        0, subject, data->soff, data->send, data->sas,
+        as_size, 1);
+    hbn_assert(tbck_data->qoff <= b_qoff);
+    hbn_assert(tbck_data->soff <= b_soff);
+        
+    as_size = data->qae - data->qas;
+    data->ident_perc = calc_ident_perc(data->qas, data->sas, as_size, &data->dist, &data->score);
+    if (data->ident_perc < perc_identity) return false;
+   //HbnTracebackDataDump(fprintf, stderr, tbck_data);
+
+    return true;
 }

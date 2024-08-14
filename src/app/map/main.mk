@@ -6,14 +6,24 @@ ifeq "$(strip ${TARGET_DIR})" ""
 endif
 
 TARGET   := falign
-SOURCES  := align_one_read.cpp \
-			chain_align_list.cpp \
-			extend_hit_list.cpp \
-			hbn_options.cpp \
-			main.cpp \
-			map_one_volume.cpp \
-			trim_overlap_subseq.cpp \
-			smooth_pca_list.cpp
+SOURCES  := \
+            align_one_read.cpp \
+            build_repeat_lookup_table.cpp \
+            build_repeat_reference_regions.cpp \
+            chain_align_list.cpp \
+            extend_hit_list.cpp \
+            hbn_options.cpp \
+            hbn_outputs.cpp \
+            hbn_word_finder.cpp \
+            infer_enzyme.cpp \
+            main.cpp \
+            make_candidate_kmer_chain.cpp \
+            map_one_volume.cpp \
+            necat_info.cpp \
+            smooth_pca_list.cpp \
+            trim_overlap_subseq.cpp \
+            ../dip3d/split_string_by_char.cpp \
+            window_masker.cpp
 
 SRC_INCDIRS  := .
 

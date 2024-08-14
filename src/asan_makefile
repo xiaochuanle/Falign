@@ -374,7 +374,7 @@ else
 	CFLAGS = -D_GLIBCXX_PARALLEL -pthread -O3 -Wall -std=gnu99 -DNDEBUG -fsanitize=address -fno-omit-frame-pointer
 endif
 
-LDFLAGS = -pthread -lm -lz -lstdc++ -fsanitize=address
+LDFLAGS = -pthread -lm -lz -lstdc++ -fsanitize=address -lcurl -Wl,-rpath,${LIBHTS}/lib -L${LIBHTS}/lib -lhts
 
 ifeq ($(OSTYPE), Linux)
 	CXXFLAGS := $(CXXFLAGS) -fopenmp

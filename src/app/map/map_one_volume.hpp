@@ -1,12 +1,16 @@
 #ifndef __MAP_ONE_VOLUME_H
 #define __MAP_ONE_VOLUME_H
 
-#include "../../algo/seq_loader.h"
-#include "../../algo/hbn_lookup_table.h"
-#include "../../algo/hbn_word_finder.h"
-#include "../../corelib/restrict_enzyme_loci_list.h"
+#include "../../corelib/restrict_enzyme_loci_list.hpp"
+#include "../../corelib/unpacked_seqdb.hpp"
+#include "../../sw/hbn_traceback.hpp"
+#include "../../sw/hbn_traceback_aux.h"
 #include "chain_align_list.hpp"
-#include "hbn_options.h"
+#include "hbn_options.hpp"
+#include "hbn_outputs.hpp"
+#include "hbn_word_finder.hpp"
+
+#include <random>
 
 #include <pthread.h>
 
@@ -22,42 +26,45 @@ typedef struct {
 
 typedef struct {
     int thread_id;
-    SeqReader* subjects;
-    SeqReader* queries;
+    HbnUnpackedDatabase* subjects;
+    HbnUnpackedDatabase* queries;
     HbnLookupTable* lktbl;
     const HbnProgramOptions* opts;
-    WordFinderThreadData* word_data;
+    HbnWordFinder* word_finder;
+    std::mt19937* gen;
+    std::uniform_int_distribution<>* dist;
     HbnTracebackData* tbck_data;
     RestrictEnzymeLociList* reloci_list;
     QueryVdfEndPointList qvep_list;
     PoreCAlignChainData* pca_chain_data;
+    size_t query_id_offset;
     int* qidx;
     pthread_mutex_t* qidx_lock;
-    FILE* out;
-    pthread_mutex_t* out_lock;
+    HbnOutputs* out;
 } MapThreadData;
 
 MapThreadData*
 MapThreadDataNew(int thread_id,
-    SeqReader* subjects,
-    SeqReader* queries,
-    HbnLookupTable* lktbl,
+    HbnUnpackedDatabase* subjects,
+    HbnUnpackedDatabase* queries,
+    HbnWordFinder* word_finder,
     const HbnProgramOptions* opts,
     RestrictEnzymeLociList* reloci_list,
+    size_t query_id_offset,
     int* qidx,
     pthread_mutex_t* qidx_lock,
-    FILE* out,
-    pthread_mutex_t* out_lock);
+    HbnOutputs* out);
 
 MapThreadData*
 MapThreadDataFree(MapThreadData* data);
 
 void
-map_one_volume(SeqReader* subjects, 
-    SeqReader* queries,
-    HbnLookupTable* lktbl,
+map_one_volume(HbnUnpackedDatabase* subjects, 
+    HbnUnpackedDatabase* queries,
+    HbnWordFinder* word_finder,
     const HbnProgramOptions* opts,
     RestrictEnzymeLociList* reloci_list,
-    FILE* out);
+    size_t query_id_offset,
+    HbnOutputs* out);
 
 #endif // __MAP_ONE_VOLUME_H

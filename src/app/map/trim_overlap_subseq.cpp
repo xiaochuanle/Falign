@@ -4,70 +4,12 @@
 #include <string>
 #include <vector>
 
-#include "../../algo/align_format/format_aux.h"
-#include "../../algo/align_format/paf.h"
-#include "../../algo/hbn_traceback_aux.h"
-#include "../../corelib/ksort.h"
+#include "../../corelib/pdqsort.h"
+#include "../../sw/hbn_traceback_aux.h"
 
 using namespace std;
 
-static const int kMinFragSize = 20;
-
-typedef struct {
-    int is_valid;
-    PoreCAlign pca;
-    int qas_offset;
-    int sas_offset;
-    int as_size;
-    int qdir;
-    int qoff, qend;
-    int e_qoff, e_qend;
-    int sdir;
-    int soff, send;
-    int e_soff, e_send;
-} TrimPca;
-
-#define dump_tpca(output_func, stream, tpca) output_func(stream, "[%d, %d, %d, %d] x [%d, %d, %d, %d]\n", \
-	tpca.pca.qid, tpca.qdir, tpca.qoff, tpca.qend,\
-	tpca.pca.sid, tpca.sdir, tpca.soff, tpca.send)
-
-bool operator < (const TrimPca& lhs, const TrimPca& rhs)
-{
-	if (lhs.qoff >= rhs.qoff && lhs.qend <= rhs.qend) return true;
-	if (lhs.pca.sid == rhs.pca.sid && lhs.soff >= rhs.soff && lhs.send <= rhs.send) return true;
-	return false;
-}
-
-struct TrimPcaList
-{
-    vector<TrimPca> tpca_list;
-    string align_strings;
-
-    void add(PoreCAlign* pca, 
-            int qoff, int qend, int soff, int send,
-            const char* qas, const char* sas, const int as_size) {
-        TrimPca tpca;
-        tpca.is_valid = 1;
-        tpca.pca = *pca;
-        tpca.qas_offset = align_strings.size();
-        align_strings.append(qas, as_size);
-        tpca.sas_offset = align_strings.size();
-        align_strings.append(sas, as_size);
-        tpca.as_size = as_size;
-
-        tpca.qdir = pca->qdir;
-        tpca.qoff = qoff;
-        tpca.qend = qend;
-        tpca.e_qoff = pca->enzyme_qoff;
-        tpca.e_qend = pca->enzyme_qend;
-        tpca.sdir = FWD;
-        tpca.soff = soff;
-        tpca.send = send;
-        tpca.e_soff = pca->enzyme_soff;
-        tpca.e_send = pca->enzyme_send;
-        tpca_list.push_back(tpca);
-    }
-};
+static const int kMinFragSize = 50;
 
 void
 set_trim_pca_list_for_fwd_query(TrimPcaList* src, TrimPcaList* dst, const int enzyme_size)
@@ -239,8 +181,10 @@ s_divide_enzyme_offset(RestrictEnzyme* enzyme,
             sb += enzyme->break_loci;
         }
         if (pca->enzyme_qend != pca->qsize && pca->qend == pca->enzyme_qend && pca->send == pca->enzyme_send) {
-            qe += enzyme->break_loci;
-            se += enzyme->break_loci;
+            if (qe + enzyme->enzyme_size <= pca->qsize && se + enzyme->enzyme_size <= pca->ssize) {
+                qe += enzyme->break_loci;
+                se += enzyme->break_loci;
+            }
         }
         *qb_ = qb;
         *qe_ = qe;
@@ -258,10 +202,12 @@ s_divide_enzyme_offset(RestrictEnzyme* enzyme,
             sb -= enzyme->break_loci;
         }        
         if (pca->enzyme_qend != pca->qsize && pca->qend == pca->enzyme_qend && pca->send == pca->enzyme_send) {
-            qb -= enzyme->enzyme_size;
-            se += enzyme->enzyme_size;
-            qb += enzyme->break_loci;
-            se -= enzyme->break_loci;
+            if (qb >= enzyme->enzyme_size && se + enzyme->enzyme_size <= pca->ssize) {
+                qb -= enzyme->enzyme_size;
+                se += enzyme->enzyme_size;
+                qb += enzyme->break_loci;
+                se -= enzyme->break_loci;
+            }
         } 
         *qb_ = pca->qsize - qe;
         *qe_ = pca->qsize - qb;
@@ -271,74 +217,9 @@ s_divide_enzyme_offset(RestrictEnzyme* enzyme,
 }
 
 void
-get_pca_align_string_edlib(HbnTracebackData* tbck_data,
-    RestrictEnzymeLociList* reloci_list,
-    SeqReader* subjects,
-    const char* query_name,
-    const int query_id,
-    const u8* fwd_query,
-    const u8* rev_query,
-    const int query_size,
-    PoreCAlign* pca,
-    TrimPcaList* tpca_list)
-{
-    bool rr = (pca->qoff >=0 && pca->qoff < pca->qend && pca->qend <= pca->qsize)
-             &&
-             (pca->soff >= 0 && pca->soff < pca->send && pca->send <= pca->ssize);
-    if (!rr) {
-        fprintf(stderr, "%s\n", query_name);
-        dump_pca(fprintf, stderr, *pca, -1);
-        abort();
-    }
-    //HBN_LOG("get align string for");
-    //dump_pca(fprintf, stderr, *pca, -1);
-    const u8* query = (pca->qdir == FWD) ? fwd_query : rev_query;
-    const u8* subject = SeqReader_Seq(subjects, pca->sid, FWD);
-    const int subject_size = SeqReader_SeqSize(subjects, pca->sid);
-    int qb, qe, sb, se;
-    s_divide_enzyme_offset(&reloci_list->enzyme, pca, &qb, &qe, &sb, &se);
-    int dist = max(qe - qb, se - sb);
-    dist = dist * 0.5;// (100.0 - pca->pi) * 1.2 / 100.0;
-    
-    int a_qb = 0, a_qe = 0, a_sb = 0, a_se = 0;
-    double a_pi = 0.0, a_epi = 0.0;
-    const char* qas = NULL;
-    const char* qae = NULL;
-    const char* sas = NULL;
-    const char* sae = NULL;
-    int as_size = 0;
-
-    int r = edlib_nw(tbck_data->edlib,
-        query + qb,
-        qe - qb,
-        subject + sb,
-        se - sb,
-        dist,
-        &tbck_data->qabuf,
-        &tbck_data->sabuf);
-    if (!r) return;
-    a_qb = qb;
-    a_qe = qe;
-    a_sb = sb;
-    a_se = se;
-
-    qas = ks_s(tbck_data->qabuf);
-    sas = ks_s(tbck_data->sabuf);
-    as_size = ks_size(tbck_data->qabuf);
-    qae = qas + as_size;
-    sae = sas + as_size;  
-    validate_aligned_string(__FILE__, __func__, __LINE__,
-        0, query, a_qb, a_qe, qas,
-        0, subject, a_sb, a_se, sas, as_size, TRUE); 
-
-    tpca_list->add(pca, a_qb, a_qe, a_sb, a_se, qas, sas, as_size);
-    //fprintf(stderr, "[%d, %d] x [%d, %d]\n", a_qb, a_qe, a_sb, a_se);
-}
-
-void
 get_pca_align_string(HbnTracebackData* tbck_data,
     RestrictEnzymeLociList* reloci_list,
-    SeqReader* subjects,
+    HbnUnpackedDatabase* subjects,
     const char* query_name,
     const int query_id,
     const u8* fwd_query,
@@ -357,11 +238,19 @@ get_pca_align_string(HbnTracebackData* tbck_data,
     }
     //HBN_LOG("get align string for");
     //dump_pca(fprintf, stderr, *pca, -1);
+    if (pca->qend - pca->qoff < 50 || pca->send - pca->soff < 50) return;
     const u8* query = (pca->qdir == FWD) ? fwd_query : rev_query;
-    const u8* subject = SeqReader_Seq(subjects, pca->sid, FWD);
-    const int subject_size = SeqReader_SeqSize(subjects, pca->sid);
+    const u8* subject = subjects->GetSequence(pca->sid);
+    const int subject_size = subjects->SeqSize(pca->sid); 
     int qb, qe, sb, se;
     s_divide_enzyme_offset(&reloci_list->enzyme, pca, &qb, &qe, &sb, &se);
+    bool xxr = (qb >= 0) && (qb < qe) && (qe <= pca->qsize) && (sb >= 0) && (sb < se) && (se <= pca->ssize);
+    if (!xxr) {
+	    dump_pca(fprintf, stderr, *pca, -1);
+	    fprintf(stderr, "[%d, %d, %d] x [%d, %d, %d] %d\n", qb, qe, pca->qsize, sb, se, pca->ssize, query_size);
+	    fprintf(stderr, "enzyme length: %d, brek-loci: %d\n", reloci_list->enzyme.enzyme_size, reloci_list->enzyme.break_loci);
+	    abort();
+    }
     int dist = max(qe - qb, se - sb);
     dist = dist * (100.0 - pca->pi) * 1.2 / 100.0;
     if (dist == 0) dist = max(qe - qb, se - sb) * 0.2;
@@ -394,12 +283,12 @@ get_pca_align_string(HbnTracebackData* tbck_data,
             &a_sb,
             &a_se,
             &a_pi,
-            &tbck_data->qabuf,
-            &tbck_data->sabuf);
+            tbck_data->ext_qabuf,
+            tbck_data->ext_sabuf);
     if (r) {
-        qas = ks_s(tbck_data->qabuf);
-        sas = ks_s(tbck_data->sabuf);
-        as_size = ks_size(tbck_data->qabuf);
+        qas = tbck_data->ext_qabuf.c_str();
+        sas = tbck_data->ext_sabuf.c_str();
+        as_size = tbck_data->ext_qabuf.size();
         a_epi = calc_effective_ident_perc(qas, sas, as_size);
         //if (a_epi < pca->pi - 3.0) r = 0;
     }
@@ -426,14 +315,14 @@ get_pca_align_string(HbnTracebackData* tbck_data,
                 &a_sb,
                 &a_se,
                 &a_pi,
-                &tbck_data->qabuf,
-                &tbck_data->sabuf);        
+                tbck_data->ext_qabuf,
+                tbck_data->ext_sabuf);        
     }
     if (!r) return;
 
-    qas = ks_s(tbck_data->qabuf);
-    sas = ks_s(tbck_data->sabuf);
-    as_size = ks_size(tbck_data->qabuf);
+    qas = tbck_data->ext_qabuf.c_str();
+    sas = tbck_data->ext_sabuf.c_str();
+    as_size = tbck_data->ext_qabuf.size();
     qae = qas + as_size;
     sae = sas + as_size;  
     validate_aligned_string(__FILE__, __func__, __LINE__,
@@ -669,340 +558,29 @@ s_trim_subject_overlap_subseq(TrimPcaList* tpca_list)
     }
 }
 
-static void
-s_dump_repeat_pca(PoreCAlign* pca, const char* query_name, SeqReader* subjects, kstring_t* out)
-{
-    ksprintf(out, "hm:Z:");
-    const char* subject_name = SeqReader_SeqName(subjects, pca->sid);
-    const char strand = (pca->qdir == FWD) ? '+' : '-';
-    ksprintf(out, "%s:%c:%d:%d:%s:%d:%d:%g", query_name, strand, pca->chain_qoff, pca->chain_qend,
-        subject_name, pca->soff, pca->send, pca->pi);
-}
-
-static void
-dump_sam_cigar(const int qoff, const int qend, const int qsize,
-    const char* qaln, const char* saln, const int aln_size, kstring_t* out)
-{
-    if (qoff) ksprintf(out, "%dS", qoff);
-    dump_cigar_string(qaln, saln, aln_size, out);
-    if (qend < qsize) ksprintf(out, "%dS", qsize - qend);
-}
-
-static BOOL 
-validate_cigar_and_seq_size(const char* cigar, const int query_size)
-{
-    const int c_n = strlen(cigar);
-    int c_i = 0;
-    int q_base = 0;
-    while (c_i < c_n) {
-        size_t j = c_i + 1;
-        while (j < c_n && isdigit(cigar[j])) ++j;
-        char op = cigar[j];
-        int num = atoi(cigar + c_i);
-        switch (op)
-        {
-        case 'S':
-            q_base += num;
-            break;
-        case 'M':
-            q_base += num;
-            break;
-        case 'D':
-            break;
-        case 'I':
-            q_base += num;
-            break;
-        default:
-            break;
-        }
-        c_i = j + 1;
-    }    
-    if (q_base != query_size) {
-        HBN_LOG("cigar and seq_size is inconsistent: %d v.s. %d", q_base, query_size);
-        return false;
-    }
-    return true;
-}
-
-void
-s_dump_sam_pca(HbnTracebackData* tbck_data,
-    RestrictEnzymeLociList* reloci_list,
-    SeqReader* subjects,
-    const char* query_name,
-    const int query_id,
-    const u8* fwd_query,
-    const u8* rev_query,
-    const char* query_qv,
-    const int query_size,
-    PoreCAlign* all_pca_a,
-    int all_pca_c,
-    TrimPcaList* tpca_list,
-    TrimPca* tpca,
-    const EChainType chain_type,
-    const int extended_subject,
-    kstring_t* out)
-{
-    const char tab = '\t';
-    int flag = 0;
-    if (tpca->pca.qdir ==  REV) flag |= 0x10; // reverse query strand
-
-    ksprintf(out, "%s", query_name); /// 1) query name --- string  [!-?A-~]{1,254}
-    kputc(tab, out);
-    ksprintf(out, "%d", flag); /// 2) flag --- int  [0, 2^16-1]
-    kputc(tab, out);
-    const char* subject_name = SeqReader_SeqName(subjects, tpca->pca.sid);
-    ksprintf(out, "%s", subject_name); /// 3) subject name --- string  \*|[:rname:^*=][:rname:]*
-    kputc(tab, out);
-    ksprintf(out, "%d", tpca->soff + 1); /// 4) left most subject position (1-based) --- int  [0, 2^31-1]
-    kputc(tab, out);
-    ksprintf(out, "%d", tpca->pca.map_q); /// 5) mapq --- int [0, 2^8-1]
-    const char* qas = tpca_list->align_strings.c_str() + tpca->qas_offset;
-    const char* sas = tpca_list->align_strings.c_str() + tpca->sas_offset;
-    const int as_size = tpca->as_size;
-    kputc(tab, out);
-    dump_sam_cigar(tpca->qoff, tpca->qend, query_size, qas, sas, as_size, out); /// 6) cigar --- string  \*|([0-9]+[MIDNSHPX=])+
-    ks_dinit(cigar);
-    dump_sam_cigar(tpca->qoff, tpca->qend, query_size, qas, sas, as_size, &cigar);
-    validate_cigar_and_seq_size(ks_s(cigar), query_size);
-    ks_destroy(cigar);
-    kputc(tab, out);
-    ksprintf(out, "*"); /// 7) reference name of the mate/next read --- string  \*|=|[:rname:^*=][:rname]*
-    kputc(tab, out);
-    ksprintf(out, "0"); /// 8) position of the mate/next read --- int [0, 2^31-1]
-    kputc(tab, out);
-    ksprintf(out, "%d", 0); /// 9) observed template LENgth --- int [-2^31 + 1, 2^31 - 1]
-    kputc(tab, out);
-    /// 10) segment SEQuence --- string \*|[A-Za-z=.]+
-    if (!fwd_query) {
-        ksprintf(out, "*");
-    } else {
-        for (int i = 0; i < query_size; ++i) {
-            int c = (tpca->pca.qdir == FWD) ? fwd_query[i] : rev_query[i];
-            c = DECODE_RESIDUE(c);
-            kputc(c, out);
-        }
-    }
-    /// 11) ASCII of Phred-scaled base QUALity+33 --- string [!-~]+
-    kputc(tab, out);
-    if (!query_qv) {
-        ksprintf(out, "*"); 
-    } else {
-        for (int i = 0; i < query_size; ++i) {
-            char c = (tpca->pca.qdir == FWD) ? query_qv[i] : query_qv[query_size - 1 - i];
-            kputc(c, out);
-        }
-    }
-
-    if (tpca->pca.qc >= 0) {
-        kputc(tab, out);
-        s_dump_repeat_pca(all_pca_a + tpca->pca.qc, query_name, subjects, out);
-    }
-
-    int num_ident = 0;
-    for (int i = 0; i < as_size; ++i) if (qas[i] == sas[i]) ++num_ident;
-    int map_score = 0;
-    double pi = calc_ident_perc(qas, sas, as_size, NULL, &map_score);
-    kputc(tab, out);
-    ksprintf(out, "s1:i:%d", map_score); /// chaining score
-    kputc(tab, out);
-    ksprintf(out, "NM:i:%d", as_size - num_ident); /// gaps and mismatches in the alignment
-    kputc(tab, out);
-    ksprintf(out, "AS:i:%d", map_score); ///  dp score
-    kputc(tab, out);
-    dump_md_string(qas, sas, as_size, out);
-    /// qid
-    kputc(tab, out);
-    ksprintf(out, "qi:i:%d", query_id);
-    /// qdir
-    kputc(tab, out);
-    ksprintf(out, "qd:i:%d", tpca->pca.qdir);
-    /// qs
-    kputc(tab, out);
-    ksprintf(out, "qs:i:%d", tpca->qoff);
-    /// qe
-    kputc(tab, out);
-    ksprintf(out, "qe:i:%d", tpca->qend);
-    /// vqs
-    kputc(tab, out);
-    ksprintf(out, "qS:i:%d", tpca->pca.enzyme_qoff);
-    /// vqe
-    kputc(tab, out);
-    ksprintf(out, "qE:i:%d", tpca->pca.enzyme_qend);
-    // ql
-    kputc(tab, out);
-    ksprintf(out, "ql:i:%d", query_size);
-    /// sid
-    kputc(tab, out);
-    ksprintf(out, "si:i:%d", tpca->pca.sid);
-    /// ss
-    kputc(tab, out);
-    ksprintf(out, "ss:i:%d", tpca->soff);
-    /// se
-    kputc(tab, out);
-    ksprintf(out, "se:i:%d", tpca->send);
-    /// vss
-    kputc('\t', out);
-    ksprintf(out, "vS:i:%d", tpca->pca.enzyme_soff);
-    /// vse
-    kputc('\t', out);
-    ksprintf(out, "vE:i:%d", tpca->pca.enzyme_send);
-    ///sl
-    kputc(tab, out);
-    ksprintf(out, "sl:i:%d", tpca->pca.ssize);
-    /// identity
-    kputc(tab, out);
-    ksprintf(out, "pi:f:%g", pi);
-    /// global chain score
-    kputc(tab, out);
-    ksprintf(out, "gs:i:%d", tpca->pca.chain_score);
-    /// complete map
-    //kputc(tab, out);
-    //const char* map_type = get_chain_type_name(chain_type);
-    //ksprintf(out, "mt:Z:%s", map_type);
-    kputc('\n', out);
-}
-
-static int
-s_dump_one_pca(HbnTracebackData* tbck_data,
-    RestrictEnzymeLociList* reloci_list,
-    SeqReader* subjects,
-    const char* query_name,
-    const int query_id,
-    const u8* fwd_query,
-    const u8* rev_query,
-    const char* query_qv,
-    const int query_size,
-    PoreCAlign* all_pca_a,
-    int all_pca_c,
-    TrimPcaList* tpca_list,
-    TrimPca* tpca,
-    const EChainType chain_type,
-    const int extended_subject,
-    kstring_t* out)
-{
-    PoreCAlign* pca = &tpca->pca;
-//if (tpca->pca.map_q < 5) return 0;
-    const char* subject_name = SeqReader_SeqName(subjects, pca->sid);
-    const int subject_size = SeqReader_SeqSize(subjects, pca->sid);
-    ksprintf(out, "%s", query_name);
-    kputc('\t', out);
-    ksprintf(out, "%d", query_size);
-    kputc('\t', out);
-    if (pca->qdir == FWD) {
-        ksprintf(out, "%d", tpca->qoff);
-        kputc('\t', out);
-        ksprintf(out, "%d", tpca->qend);
-        kputc('\t', out);
-    } else {
-        ksprintf(out, "%d", query_size - tpca->qend);
-        kputc('\t', out);
-        ksprintf(out, "%d", query_size - tpca->qoff);
-        kputc('\t', out);
-    }
-    char strand = (pca->qdir == FWD) ? '+' : '-';
-    kputc(strand, out);
-    kputc('\t', out);
-
-    ksprintf(out, "%s", subject_name);
-    kputc('\t', out);
-    ksprintf(out, "%d", subject_size);
-    kputc('\t', out);
-    ksprintf(out, "%d", tpca->soff);
-    kputc('\t', out);
-    ksprintf(out, "%d", tpca->send);
-    kputc('\t', out);
-
-    const char* qas = tpca_list->align_strings.c_str() + tpca->qas_offset;
-    const char* sas = tpca_list->align_strings.c_str() + tpca->sas_offset;
-    const int as_size = tpca->as_size;
-    int mat = 0;
-    for (int i = 0; i < as_size; ++i) mat += (qas[i] == sas[i]);
-    ksprintf(out, "%d", mat);
-    kputc('\t', out);
-    ksprintf(out, "%d", as_size);
-    kputc('\t', out);
-    ksprintf(out, "%d", tpca->pca.map_q);
-
-    kputc('\t', out);
-    if (pca->qdir == FWD) {
-        ksprintf(out, "qS:i:%d", pca->enzyme_qoff);
-    } else {
-        int enzyme_size = reloci_list->enzyme.enzyme_size;
-        int x = (pca->enzyme_qend == pca->qsize) ? 0 : (pca->qsize - pca->enzyme_qend - enzyme_size);
-        ksprintf(out, "qS:i:%d", x);
-    }
-
-    kputc('\t', out);
-    if (pca->qdir == FWD) {
-        ksprintf(out, "qE:i:%d", pca->enzyme_qend);
-    } else {
-        int enzyme_size = reloci_list->enzyme.enzyme_size;
-        int x = (pca->enzyme_qoff == 0) ? pca->qsize : (pca->qsize - pca->enzyme_qoff - enzyme_size);
-        ksprintf(out, "qE:i:%d", x);
-    }
-
-    kputc('\t', out);
-    ksprintf(out, "vS:i:%d", pca->enzyme_soff);
-    kputc('\t', out);
-    ksprintf(out, "vE:i:%d", pca->enzyme_send);
-
-    double pi = calc_ident_perc(qas, sas, as_size, NULL, NULL);
-
-    kputc('\t', out);
-    ksprintf(out, "pi:f:%g", pi);
-
-    /// global chain score
-    kputc('\t', out);
-    ksprintf(out, "gs:i:%d", tpca->pca.chain_score);
-
-    kputc('\t', out);
-    ksprintf(out, "Es:i:%d", extended_subject);
-
-    //const char* map_type = get_chain_type_name(chain_type);
-    //kputc('\t', out);
-    //ksprintf(out, "mt:Z:%s", map_type);
-
-    kputc('\t', out);
-    print_paf_cigar(tpca->qoff, tpca->qend, query_size, qas, sas, as_size, out);
-    kputc('\t', out);
-    dump_md_string(qas, sas, as_size, out);
-
-    if (pca->qc >= 0) {
-        kputc('\t', out);
-        s_dump_repeat_pca(all_pca_a + pca->qc, query_name, subjects, out);
-    }
-
-    kputc('\n', out);
-
-    return 1;
-}
-
 bool s_is_complete_chain(const int* vdfa, const int vdfc, const PoreCAlign* pca_a, const int pca_c);
 
 void
 trim_overlap_subseqs(HbnTracebackData* tbck_data,
     RestrictEnzymeLociList* reloci_list,
     QueryVdfEndPointList* qvep_list,
-    SeqReader* subjects,
+    HbnUnpackedDatabase* subjects,
     const char* query_name,
     const int query_id,
     const u8* fwd_query,
     const u8* rev_query,
-    const char* query_qv,
     const int query_size,
     PoreCAlign* all_pca_a,
     int all_pca_c,
     PoreCAlign* pca_a,
     int pca_c,
     const EChainType chain_type,
-    int extended_subject,
-    EOutputFmt outfmt,
-    kstring_t* out)
+    TrimPcaList& trim_pca_list)
 {
     if (1)
     {
-        const int* vdfa = kv_data(qvep_list->fwd_vdf_endpoint_list);
-        const int vdfc = kv_size(qvep_list->fwd_vdf_endpoint_list);
+        const int* vdfa = qvep_list->fwd_vdf_endpoint_list.data();
+        const int vdfc = qvep_list->fwd_vdf_endpoint_list.size();
         bool is_complete_chain = s_is_complete_chain(vdfa, vdfc, pca_a, pca_c);
         if (!is_complete_chain) {
             for (int i = 0; i < pca_c; ++i) {
@@ -1044,7 +622,7 @@ trim_overlap_subseqs(HbnTracebackData* tbck_data,
 
     TrimPcaList qry_tpca_list;
     set_trim_pca_list_for_fwd_query(&all_tpca_list, &qry_tpca_list, reloci_list->enzyme.enzyme_size);
-    sort(qry_tpca_list.tpca_list.begin(),
+    pdqsort(qry_tpca_list.tpca_list.begin(),
         qry_tpca_list.tpca_list.end(),
         [](const TrimPca& a, const TrimPca& b)->bool { return a.qoff < b.qoff; });
     s_trim_query_overlap_subseq(&qry_tpca_list);
@@ -1057,7 +635,7 @@ trim_overlap_subseqs(HbnTracebackData* tbck_data,
         if (!tpca->is_valid) continue;    
         hbn_assert(tpca->sdir == FWD);  
         PoreCAlign* pca = &tpca->pca;
-        const u8* subject = SeqReader_Seq(subjects, pca->sid, FWD);  
+        const u8* subject = subjects->GetSequence(pca->sid);
         const char* qas = sbj_tpca_list.align_strings.c_str() + tpca->qas_offset;
         const char* sas = sbj_tpca_list.align_strings.c_str() + tpca->sas_offset;
         int as_size = tpca->as_size;
@@ -1071,7 +649,7 @@ trim_overlap_subseqs(HbnTracebackData* tbck_data,
         TrimPca* tpca = &sbj_tpca_list.tpca_list[i];
         if (!tpca->is_valid) continue;      
         PoreCAlign* pca = &tpca->pca;
-        const u8* subject = SeqReader_Seq(subjects, pca->sid, FWD);  
+        const u8* subject = subjects->GetSequence(pca->sid);
         const char* qas = sbj_tpca_list.align_strings.c_str() + tpca->qas_offset;
         const char* sas = sbj_tpca_list.align_strings.c_str() + tpca->sas_offset;
         int as_size = tpca->as_size;
@@ -1080,32 +658,16 @@ trim_overlap_subseqs(HbnTracebackData* tbck_data,
             pca->sid, subject, tpca->soff, tpca->send, sas, as_size, TRUE);
     }
 
-    int seq_has_dummped = 0;
+    trim_pca_list.clear();
+    trim_pca_list.align_strings = sbj_tpca_list.align_strings;
     for (int i = 0; i < n_pca; ++i) {
         TrimPca* tpca = &sbj_tpca_list.tpca_list[i];
         if (!tpca->is_valid) continue;
-        if (chain_type == eMaxCovChain && tpca->pca.map_q < 10) {
+        if (chain_type == eMaxCovChain && tpca->pca.map_q < 5) {
             //HBN_LOG("1 repeat pca");
             //dump_chain_pca(fprintf, stderr, tpca->pca, -1);
 		    continue;
 	    }
-        if (outfmt == eOutputFmt_PAF) {
-            s_dump_one_pca(tbck_data, reloci_list, subjects, query_name, query_id, 
-                fwd_query, rev_query, query_qv, query_size, all_pca_a, all_pca_c, &sbj_tpca_list, tpca, 
-                chain_type, extended_subject, out);
-        } else if (outfmt == eOutputFmt_SAM) {
-            const u8* fwd_q = NULL;
-            const u8* rev_q = NULL;
-            const char* qv = NULL;
-            if (!seq_has_dummped) {
-                fwd_q = fwd_query;
-                rev_q = rev_query;
-                qv = query_qv;
-                seq_has_dummped = 1;
-            }
-            s_dump_sam_pca(tbck_data, reloci_list, subjects, query_name, query_id, 
-                fwd_q, rev_q, qv, query_size, all_pca_a, all_pca_c, &sbj_tpca_list, tpca, 
-                chain_type, extended_subject, out);
-        }
+        trim_pca_list.tpca_list.push_back(*tpca);
     }
 }

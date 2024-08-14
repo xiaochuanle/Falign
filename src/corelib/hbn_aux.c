@@ -12,15 +12,6 @@
 
 #include "ksort.h"
 
-KSORT_INIT_GENERIC(i32)
-KSORT_INIT_GENERIC(idx)
-KSORT_INIT_GENERIC(u32)
-KSORT_INIT_GENERIC(u64)
-KSORT_INIT_GENERIC(uidx)
-KSORT_INIT_GENERIC(size_t)
-#define int_pair_lt(a, b) (((a).first < (b).first) || ((a).first == (b).first && (a).second < (b).second))
-KSORT_INIT(int_pair, IntPair, int_pair_lt)
-
 static const char* hbn_log_level_name[] = {
     [LOG_EMERG]     = "EMERG",
     [LOG_ALERT]     = "ALERT",

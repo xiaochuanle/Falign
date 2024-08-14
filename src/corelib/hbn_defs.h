@@ -4,8 +4,6 @@
 #include <stdint.h>
 #include <inttypes.h>
 
-#include "kvec.h"
-
 #ifndef __STDC_FORMAT_MACROS
 #define __STDC_FORMAT_MACROS
 #endif
@@ -84,23 +82,6 @@ typedef u64         uidx;
 #define GAP_CHAR            ('-')
 #define GAP_CODE            (4)
 #define DECODE_RESIDUE(__r) ("ACGT-"[(u64)(__r)])
-
-typedef kvec_t(char)    vec_char;
-typedef kvec_t(idx)     vec_idx;
-typedef kvec_t(uidx)    vec_uidx;
-typedef kvec_t(int)     vec_int;
-typedef kvec_t(u8)      vec_u8;
-typedef kvec_t(u64)     vec_u64;
-typedef kvec_t(size_t)  vec_size_t;
-typedef kvec_t(void*)   vec_void_ptr;
-typedef kvec_t(double)  vec_double;
-
-typedef struct {
-    int first;
-    int second;
-} IntPair;
-
-typedef kvec_t(IntPair) vec_int_pair;
 
 #define HBN_MAX_PATH_LEN    2000
 

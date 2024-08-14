@@ -22,8 +22,6 @@ typedef struct {
     BOOL is_hom;
 } HbnInitHit;
 
-typedef kvec_t(HbnInitHit) vec_init_hit;
-
 #define dump_init_hit(output_func, stream, hit) \
     output_func(stream, "[%d, %d, %d, %d] x [%d, %d, %d], %d\n", \
         (hit).qid, \

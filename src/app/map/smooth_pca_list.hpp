@@ -1,10 +1,10 @@
 #ifndef __SMOOTH_PCA_LIST_HPP
 #define __SMOOTH_PCA_LIST_HPP
 
-#include "../../algo/hbn_traceback.h"
-#include "../../algo/hbn_traceback_aux.h"
+#include "../../sw/hbn_traceback.hpp"
+#include "../../sw/hbn_traceback_aux.h"
 #include "chain_align_list.hpp"
-#include "hbn_options.h"
+#include "hbn_options.hpp"
 
 #include <string>
 #include <vector>
@@ -13,7 +13,7 @@ void
 smooth_pca_list(std::vector<PoreCAlign>& pca_list,
     EChainType& chain_type,
     std::vector<PoreCAlign>& all_pca_list,
-    SeqReader* ref,
+    HbnUnpackedDatabase* ref,
     const char* read_name,
     const u8* fwd_read,
     const u8* rev_read,

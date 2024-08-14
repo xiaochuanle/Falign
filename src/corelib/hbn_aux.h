@@ -8,7 +8,6 @@
 #include <zlib.h>
 #include <sys/time.h>
 
-#include "kstring.h"
 #include "hbn_defs.h"
 
 #ifdef __cplusplus
@@ -140,16 +139,6 @@ hbn_exception(const char* expr, HBN_LOG_PARAMS_GENERIC, const char* fmt, ...);
 
 extern u8 nst_nt4_table[256];
 extern u8 nst_nt16_table[256];
-
-/// sort
-
-void ks_introsort_i32(size_t n, i32* a);
-void ks_introsort_idx(size_t n, idx* a);
-void ks_introsort_u32(size_t n, u32* a);
-void ks_introsort_u64(size_t n, u64* a);
-void ks_introsort_uidx(size_t n, uidx* a);
-void ks_introsort_size_t(size_t n, size_t* a);
-void ks_introsort_int_pair(size_t n, IntPair* a);
 
 void i64_to_string_with_comma_r(i64 n, char str_n[]);
 

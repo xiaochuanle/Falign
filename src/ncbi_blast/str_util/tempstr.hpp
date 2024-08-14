@@ -37,6 +37,8 @@
 
 #include <algorithm>
 
+#include <cstring>
+
 #include "../ncbi_blast_aux.hpp"
 
 

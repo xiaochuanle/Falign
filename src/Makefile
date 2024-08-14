@@ -374,7 +374,7 @@ else
 	CFLAGS = -D_GLIBCXX_PARALLEL -pthread -O3 -Wall -std=c11 -DNDEBUG -mpopcnt
 endif
 
-LDFLAGS = -pthread -lm -lz -lstdc++ 
+LDFLAGS = -pthread -lm -lz -lstdc++ -Wl,-rpath,${LIBHTS}/lib -L${LIBHTS}/lib -lhts
 
 ifeq ($(OSTYPE), Linux)
 	CXXFLAGS := $(CXXFLAGS) -fopenmp

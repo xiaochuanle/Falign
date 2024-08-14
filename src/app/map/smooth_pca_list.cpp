@@ -1,5 +1,7 @@
 #include "smooth_pca_list.hpp"
 
+#include "../../corelib/pdqsort.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -8,7 +10,7 @@ using namespace std;
 static bool 
 s_gf_p2_left_extend(int qb, int qe, int eqb, int eqe, int left_qf,
     PoreCAlign* pca,
-    SeqReader* ref,
+    HbnUnpackedDatabase* ref,
     const u8* fwd_read,
     const u8* rev_read,
     const int enzyme_size,
@@ -32,15 +34,16 @@ s_gf_p2_left_extend(int qb, int qe, int eqb, int eqe, int left_qf,
     } else {
         read = rev_read + (pca->qsize - qt);
     }
-    const u8* sbj = SeqReader_Seq(ref, pca->sid, FWD) + sf;
+    const u8* sbj = ref->GetSequence(pca->sid) + sf;
+    //const u8* sbj = SeqReader_Seq(ref, pca->sid, FWD) + sf;
     int sl = st - sf;
     int tol = hbn_max(rl, sl) * 0.5;
-    int r = edlib_nw(tbck_data->edlib, read, rl, sbj, sl, tol, &tbck_data->qabuf, &tbck_data->sabuf);
+    int r = edlib_nw(tbck_data->edlib, read, rl, sbj, sl, tol, tbck_data->ext_qabuf, tbck_data->ext_sabuf);
     if (!r) return false;
 
-    const char* qas = ks_s(tbck_data->qabuf);
-    const char* sas = ks_s(tbck_data->sabuf);
-    int as_size = ks_size(tbck_data->qabuf);
+    const char* qas = tbck_data->ext_qabuf.c_str(); 
+    const char* sas = tbck_data->ext_sabuf.c_str(); 
+    int as_size = tbck_data->ext_qabuf.size();
     double ident = calc_ident_perc(qas, sas, as_size, nullptr, nullptr);
     if (ident < pca->pi - 5.0) return false;
 
@@ -84,7 +87,7 @@ s_gf_p2_left_extend(int qb, int qe, int eqb, int eqe, int left_qf,
 static bool 
 s_gf_p2_right_extend(int qb, int qe, int eqb, int eqe, int right_qt,
     PoreCAlign* pca,
-    SeqReader* ref,
+    HbnUnpackedDatabase* ref,
     const u8* fwd_read,
     const u8* rev_read,
     const int enzyme_size,
@@ -109,15 +112,16 @@ s_gf_p2_right_extend(int qb, int qe, int eqb, int eqe, int right_qt,
     } else {
         read = rev_read + (pca->qsize - qt);
     }
-    const u8* sbj = SeqReader_Seq(ref, pca->sid, FWD) + sf;
+    const u8* sbj = ref->GetSequence(pca->sid) + sf;
+    //const u8* sbj = SeqReader_Seq(ref, pca->sid, FWD) + sf;
     int sl = st - sf;
     int tol = hbn_max(rl, sl) * 0.5;
-    int r = edlib_nw(tbck_data->edlib, read, rl, sbj, sl, tol, &tbck_data->qabuf, &tbck_data->sabuf);
+    int r = edlib_nw(tbck_data->edlib, read, rl, sbj, sl, tol, tbck_data->ext_qabuf, tbck_data->ext_sabuf);
     if (!r) return false;
 
-    const char* qas = ks_s(tbck_data->qabuf);
-    const char* sas = ks_s(tbck_data->sabuf);
-    int as_size = ks_size(tbck_data->qabuf);
+    const char* qas = tbck_data->ext_qabuf.c_str(); 
+    const char* sas = tbck_data->ext_sabuf.c_str(); 
+    int as_size = tbck_data->ext_qabuf.size();
     double ident = calc_ident_perc(qas, sas, as_size, nullptr, nullptr);
 //fprintf(stderr, "pi: %g ---> %f\n", pca->pi, ident);
     if (ident < pca->pi - 5.0 && ident < 75.0) return false;
@@ -161,7 +165,7 @@ s_gf_p2_right_extend(int qb, int qe, int eqb, int eqe, int right_qt,
 
 static bool 
 s_gf_p2_left_most_extend(PoreCAlign* pca,
-    SeqReader* ref,
+    HbnUnpackedDatabase* ref,
     const u8* fwd_read,
     const u8* rev_read,
     const int enzyme_size,
@@ -169,9 +173,10 @@ s_gf_p2_left_most_extend(PoreCAlign* pca,
 {
     vector<u8> qfrag, sfrag;
     const u8* read = (pca->qdir == FWD) ? fwd_read : rev_read;
-    const u8* subject = SeqReader_Seq(ref, pca->sid, FWD);
-    kstring_t* qabuf = &tbck_data->qabuf;
-    kstring_t* sabuf = &tbck_data->sabuf;
+    const u8* subject = ref->GetSequence(pca->sid);
+    //const u8* subject = SeqReader_Seq(ref, pca->sid, FWD);
+    string& qabuf = tbck_data->ext_qabuf;
+    string& sabuf = tbck_data->ext_sabuf;
 
     if (pca->qdir == FWD) {
         int qblk = min(pca->qoff, pca->soff + 50);
@@ -218,7 +223,7 @@ s_gf_p2_left_most_extend(PoreCAlign* pca,
 
 static bool 
 s_gf_p2_right_most_extend(PoreCAlign* pca,
-    SeqReader* ref,
+    HbnUnpackedDatabase* ref,
     const u8* fwd_read,
     const u8* rev_read,
     const int enzyme_size,
@@ -226,9 +231,10 @@ s_gf_p2_right_most_extend(PoreCAlign* pca,
 {
     vector<u8> qfrag, sfrag;
     const u8* read = (pca->qdir == FWD) ? fwd_read : rev_read;
-    const u8* subject = SeqReader_Seq(ref, pca->sid, FWD);
-    kstring_t* qabuf = &tbck_data->qabuf;
-    kstring_t* sabuf = &tbck_data->sabuf;
+    const u8* subject = ref->GetSequence(pca->sid);
+    //const u8* subject = SeqReader_Seq(ref, pca->sid, FWD);
+    string& qabuf = tbck_data->ext_qabuf;
+    string& sabuf = tbck_data->ext_sabuf;
 
     if (pca->qdir == FWD) {
         int qt = pca->qend;
@@ -298,7 +304,7 @@ s_gf_p2_set_fwd_read_offsets(PoreCAlign* pca, int& qb, int& qe, int& eqb, int& e
 void
 smooth_pca_list_pass2(std::vector<PoreCAlign>& chain,
     EChainType& chain_type,
-    SeqReader* ref,
+    HbnUnpackedDatabase* ref,
     const u8* fwd_read,
     const u8* rev_read,
     const int* vdfa,
@@ -361,7 +367,7 @@ smooth_pca_list_pass2(std::vector<PoreCAlign>& chain,
 
 void
 s_merge_adjacent_pca(std::vector<PoreCAlign>& pca_list,
-    SeqReader* ref,
+    HbnUnpackedDatabase* ref,
     const u8* fwd_read,
     const u8* rev_read,
     const int enzyme_size,
@@ -392,14 +398,15 @@ s_merge_adjacent_pca(std::vector<PoreCAlign>& pca_list,
             if (s_d <= 0) break;
             double ddf = fabs(1.0 - 1.0 * q_d / s_d);
             if (ddf > .2) break;
-            const u8* sbj = SeqReader_Seq(ref, pi->sid, FWD);
+            const u8* sbj = ref->GetSequence(pi->sid);
+            //const u8* sbj = SeqReader_Seq(ref, pi->sid, FWD);
             int tol = hbn_max(q_d, s_d) * 0.5;
             const u8* read = (pi->qdir == FWD) ? fwd_read : rev_read;
-            int r = edlib_nw(tbck_data->edlib, read + iqb, q_d, sbj + isb, s_d, tol, &tbck_data->qabuf, &tbck_data->sabuf);
+            int r = edlib_nw(tbck_data->edlib, read + iqb, q_d, sbj + isb, s_d, tol, tbck_data->ext_qabuf, tbck_data->ext_sabuf);
             if (!r) break;
-            const char* qas = ks_s(tbck_data->qabuf);
-            const char* sas = ks_s(tbck_data->sabuf);
-            int as_size = ks_size(tbck_data->qabuf);
+            const char* qas = tbck_data->ext_qabuf.c_str(); 
+            const char* sas = tbck_data->ext_sabuf.c_str(); 
+            int as_size = tbck_data->ext_qabuf.size();
             double ident = calc_ident_perc(qas, sas, as_size, nullptr, nullptr);
 	    double avg_pi = (pi->pi + pj->pi) / 2;
 	    if (ident < avg_pi - 4.0 && ident < 80.0) { ++j; continue; }
@@ -524,14 +531,14 @@ update_chain(std::vector<PoreCAlign>& chain, std::vector<PoreCAlign>& pca_list, 
             rev_pca_list.push_back(pca);
         }
     }
-    sort(fwd_pca_list.begin(), fwd_pca_list.end(), [](const PoreCAlign& a, const PoreCAlign& b) { return a.qoff < b.qoff; });
-    sort(rev_pca_list.begin(), rev_pca_list.end(), [](const PoreCAlign& a, const PoreCAlign& b) { return a.qoff < b.qoff; });
+    pdqsort(fwd_pca_list.begin(), fwd_pca_list.end(), [](const PoreCAlign& a, const PoreCAlign& b) { return a.qoff < b.qoff; });
+    pdqsort(rev_pca_list.begin(), rev_pca_list.end(), [](const PoreCAlign& a, const PoreCAlign& b) { return a.qoff < b.qoff; });
     x_update_chain(fwd_pca_list, pca_list, read_name, FWD);
     x_update_chain(rev_pca_list, pca_list, read_name, REV);
     chain.clear();
     chain.insert(chain.end(), fwd_pca_list.begin(), fwd_pca_list.end());
     chain.insert(chain.end(), rev_pca_list.begin(), rev_pca_list.end());
-    sort(chain.begin(), chain.end(), [](const PoreCAlign& a, const PoreCAlign& b) { return a.chain_qoff < b.chain_qoff; });
+    pdqsort(chain.begin(), chain.end(), [](const PoreCAlign& a, const PoreCAlign& b) { return a.chain_qoff < b.chain_qoff; });
     x_update_chain_p2(chain, pca_list, read_name);
     x_update_chain_p3(chain, pca_list, read_name);
 }
@@ -540,7 +547,7 @@ void
 smooth_pca_list(std::vector<PoreCAlign>& pca_list,
     EChainType& chain_type,
     std::vector<PoreCAlign>& all_pca_list,
-    SeqReader* ref,
+    HbnUnpackedDatabase* ref,
     const char* read_name,
     const u8* fwd_read,
     const u8* rev_read,
@@ -559,14 +566,14 @@ smooth_pca_list(std::vector<PoreCAlign>& pca_list,
             rev_pca_list.push_back(pca);
         }
     }
-    sort(fwd_pca_list.begin(), fwd_pca_list.end(), [](const PoreCAlign& a, const PoreCAlign& b) { return a.qoff < b.qoff; });
-    sort(rev_pca_list.begin(), rev_pca_list.end(), [](const PoreCAlign& a, const PoreCAlign& b) { return a.qoff < b.qoff; });
+    pdqsort(fwd_pca_list.begin(), fwd_pca_list.end(), [](const PoreCAlign& a, const PoreCAlign& b) { return a.qoff < b.qoff; });
+    pdqsort(rev_pca_list.begin(), rev_pca_list.end(), [](const PoreCAlign& a, const PoreCAlign& b) { return a.qoff < b.qoff; });
     s_merge_adjacent_pca(fwd_pca_list, ref, fwd_read, rev_read, enzyme_size, tbck_data);
     s_merge_adjacent_pca(rev_pca_list, ref, fwd_read, rev_read, enzyme_size, tbck_data);
     pca_list.clear();
     pca_list.insert(pca_list.end(), fwd_pca_list.begin(), fwd_pca_list.end());
     pca_list.insert(pca_list.end(), rev_pca_list.begin(), rev_pca_list.end());
-    sort(pca_list.begin(), pca_list.end(), [](const PoreCAlign& a, const PoreCAlign& b) { return a.chain_qoff < b.chain_qoff; });
+    pdqsort(pca_list.begin(), pca_list.end(), [](const PoreCAlign& a, const PoreCAlign& b) { return a.chain_qoff < b.chain_qoff; });
 
     update_chain(pca_list, all_pca_list, read_name);
 

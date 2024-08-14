@@ -1,11 +1,11 @@
 #ifndef __EXTEND_HIT_LIST_HPP
 #define __EXTEND_HIT_LIST_HPP
 
-#include "../../algo/hbn_traceback.h"
-#include "../../algo/hbn_traceback_aux.h"
 #include "../../corelib/gapped_candidate.h"
+#include "../../sw/hbn_traceback.hpp"
+#include "../../sw/hbn_traceback_aux.h"
 #include "chain_align_list.hpp"
-#include "hbn_options.h"
+#include "hbn_options.hpp"
 
 #include <string>
 #include <vector>
@@ -53,12 +53,11 @@ extend_hit_list(HbnTracebackData* tbck_data,
     const HbnProgramOptions* opts,
     RestrictEnzymeLociList* reloci_list,
     QueryVdfEndPointList* qvep_list,
-    SeqReader* subjects,
+    HbnUnpackedDatabase* subjects,
     const int query_id,
     const char* query_name,
     const u8* fwd_query,
     const u8* rev_query,
-    const char* query_qv,
     const int query_size,
     HbnInitHit* hita,
     int hitc,
@@ -85,5 +84,21 @@ align_subseq(const int query_id,
     RestrictEnzymeLociList* reloci_list,
     QueryVdfEndPointList* qvep_list,
     std::vector<PoreCAlign>& align_list);
+
+bool
+align_subseq_enzyme_inference(const int query_id,
+    const int query_dir,
+    const u8* fwd_query,
+    const u8* rev_query,
+    const int query_size,
+    const int subject_id,
+    const u8* subject,
+    const int subject_size,
+    const int qb, 
+    const int qe,
+    const int sb,
+    const int se,
+    const double perc_identity,
+    HbnTracebackData* tbck_data);
 
 #endif // __EXTEND_HIT_LIST_HPP

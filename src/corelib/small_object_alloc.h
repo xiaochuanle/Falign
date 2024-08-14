@@ -2,6 +2,7 @@
 #define __SMALL_OBJECT_ALLOC_H
 
 #include "hbn_aux.h"
+#include "kvec.h"
 
 #ifdef __cplusplus
 extern "C" {

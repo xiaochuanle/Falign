@@ -7,154 +7,92 @@
 * [Use `u4falign` for manipulating alignment results](#S-u4falign)
 * [Difference between `read-SAM` and `frag-SAM`](#S-sam-diff)
 
-# <a name="S-current-version"></a> Current Version
-
-`0.0.2`
-
 # <a name="S-introduction"></a> Introduction
 
 `Falign` is a sequence alignment toolkit for long noisy chromosome conformation capture (3C) reads, such as Pore-C.
 `Falign` is written in C and C++ programming language.
+`Falign` relies on the [`HTSLIB`](https://github.com/samtools/htslib) library. We have dowanloaded one copy of that and save in `./htslib/htslib-1.19.1.tar.bz2` to make it convenient for off-line installation.
 
 # <a name="S-tools"></a> Tools
 
-Three tools are released together in this toolkit.
+Two tools are released together in this toolkit.
 
 * `falign`. The alignment tool.
-* `falign_ngf`. Another alignment tool. It is used for benchmark only.
-* `u4falign`. A utility for manipulating `SAM` or `PAF` mapping results.
-* The directory `supplementary_source_code` contains scripts for generating simulated Pore-C reads and analyzing mapping results.
+* `dip3d`. A utility used internally by [`Dip3D`](https://github.com/xiaochuanle/dip3d), a diploid human 3D genome construction algorithm.
 
 # <a name="S-installation"></a> Installation
 
-## <a name="SS-download"></a> Download files
-
+### Step 1: Download source codes
 ```shell
 $ git clone https://github.com/xiaochuanle/Falign.git
 ```
 
-## <a name="SS-install-from-binary"></a> Install from executable binaries
-
+### Step 2: Install `HTSLIB`
 ```shell
-$ cd Falign/release
-$ tar xzvf Falign-0.0.2-20230213-Linux-amd64.tar.gz
-$ cd Falign/Linux-amd64/bin/
-$ export PATH=$PATH:$(pwd)
+$ cd Falign
+$ ./htslib/install-htslib.sh
 ```
-The last command `export PATH=$PATH:$(pwd)` is used for adding the path of `falign` to the system `PATH` so that you don't have to type the full path of `falign` (such as `/data3/cy/map_test/Falign/Linux-amd64/bin/falign`) every time you used `falign`.
 
-## <a name="SS-install-from-source-codes"></a> Install from source codes
+### Step 3: Export `HTSLIB` to an environment variable
 
+In Step 2 above, we install `HTSLIB` in directory `./htslib/htslib`:
 ```shell
-$ cd Falign/src
-$ make -j
-$ cd ../Linux-amd64/bin/
-$ export PATH=$PATH:$(pwd)
+$ ls ./htslib/htslib
+bin  include  lib  share
+```
+We have to tell `Falign` where to link `HTSLIB`. To do this, we export the location of this directory to an environment variable name `LIBHTS`:
+```shell
+$ export LIBHTS=$(pwd)/htslib/htslib
+$ echo $LIBHTS
+/share/home/chuanlex/chenying/data/Falign/htslib/htslib
+```
+
+### Step 4: Install `Falign`
+***Before installing `Falign`, make sure you have executed Step 3 above.*** Otherwise the linker will complain that it cannot find `-lhts`.
+```shell
+$ cd src/ && make && cd ..
+```
+
+`Falign` is installed in the directory `Linux-amd64/bin/`:
+```shell
+$ ls Linux-amd64/bin/
+dip3d  falign
 ```
 
 # <a name="S-usage"></a> Usage
 
-Decompress the sample data and decompress it.
+## Sample reads and reference
+
+The directory `ara-sample-data/` provides sample reference file `reference.fa.gz` and sample reads file `reads.fq.gz`.
+
+## Step 1: Build repeat regions for the reference genome
 ```shell
-$ cd Falign
-$ tar xzvf sample-data.tar.gz
-$ cd sample-data
+./Linux-amd64/bin/falign build-repeat ara-sample-data/reference.fa.gz ara-sample-data/reference.fa.gz.repeat.bed
 ```
 
-We provide one sample reference `ara_2_4.fa` in the `./sample-data/ref` directory:
+## Step 2: Map reads to the reference
 ```shell
-$ ls ref
-ara_2_4.fa
-```
-and provide three sample reads in the `./sample-data/reads/` directory:
-```shell
-$ ls reads
-ara_reads_1.fq ara_reads_2.fq ara_reads_3.fq
+./Linux-amd64/bin/falign -repeat_bed ara-sample-data/reference.fa.gz.repeat.bed -num_threads 4 ara-sample-data/reference.fa.gz ara-sample-data/reads.fq.gz > map.paf
 ```
 
-## <a name="SS-quick-start"></a> Quick Start
+The mapping results are output to the file `map.paf` in PAF format.
 
-By default, `falign` outputs mapping results in `SAM` format:
+## <a name="output-format"></a> Output format
 
-```shell
-$ falign -num_threads 48 ^GATC ref/ara_2_4.fa \
-	reads/ara_reads_1.fq \
-    reads/ara_reads_2.fq \
-    reads/ara_reads_3.fq > map.sam
-```
+`Falign` supports different output formats (specified by the `-outfmt` option):
+* PAF
+* SAM
+* BAM
+* FRAG-SAM
+* FRAG-BAM
 
-Users can output the mapping results in `PAF` format by using the `-outfmt paf` option:
-```shell
-$ falign -num_threads 48 -outfmt paf ^GATC ref/ara_2_4.fa \
-	reads/ara_reads_1.fq \
-    reads/ara_reads_2.fq \
-    reads/ara_reads_3.fq > map.paf
-```
-
-## <a name="some-comments-on-usage"></a> Some comments on usage
-
-### </a> 1. The restriction enzyme sequence
-
-In the running commands above, `^GATC` is the sequence of the DpnII restriction enzyme used for generating the reads. `falign` provides the sequences for all familiar restriction enzymes (to see the following information, just type the `falign` command) so that you don't bother to lookup for them in other places:
-```shell
-*** Examples of familiar <enzyme_seq>:
-Enzyme_Name             Enzyme_Seq
-DpnII                   ^GATC
-HindIII                 A^AGCTT
-NcoI                    C^CATGG
-NlaIII                  CATG^
-```
-
-### </a> The input format of reads
-
-Besides the way in the examples above, `falign` also accepts reads input in the following way:
-
-* Read list. You can list the paths of all the reads in a file:
-```shell
-$ cat read_list.lst
-/Users/chenying/Desktop/mwj/temp/Falign/sample-data/reads/ara_reads_1.fq
-/Users/chenying/Desktop/mwj/temp/Falign/sample-data/reads/ara_reads_2.fq
-/Users/chenying/Desktop/mwj/temp/Falign/sample-data/reads/ara_reads_3.fq
-```
-And then input `read_list.lst` to `falign`:
-``` shell
-falign -num_threads 48 ^GATC ref/ara_2_4.fa.gz read_list.lst > map.sam
-```
-
-* Directory. If you have many `FASTQ`s of reads in a directory, just type the name of the directory:
-``` shell
-falign -num_threads 48 ^GATC ref/ara_2_4.fa.gz reads > map.sam
-```
-Note that only read files are allowed in the `reads` directory. If you put other files in the `reads`, `falign` will complain.
-
-### </a> Output format
-
-`falign` supports `SAM` output format:
-```shell
-$ falign -outfmt sam
-```
-and `PAF` format:
-```shell
-$ falign -outfmt paf
-```
 In each output result (note that every alignment has for offsets: read start, read end, reference start, reference end), `falign` adds the following additional fields:
 * `qS:i:` the nearest restiction enzyme site to the read start position
 * `qE:i:` the nearest restiction enzyme site to the read end position
 * `vS:i:` the nearest restriction enzyme site to the reference start position
 * `vE:i:` the nearest restriction enzyme site to the reference end position
 * `pi:f:` percentage of identity of the alignment
-* `gs:i:` the global chain score of the alignment's candidate
-* `hm:Z:` a homologous map of the fragment
-
-# <a name="S-u4falign"></a> Use `u4falign` for manipulating alignment results
-
-`u4falign` is used for manipulating output results of `falign`. It supports the following commands:
-
- * `sam2salsa2`      Transfer SAM results to pairwise contacts for SALSA2
- * `sam23ddna`       Transfer SAM results to pairwise contacts for 3DDNA
- * `paf2salsa2`      Transfer PAF results to pairwise contacts for SALSA2
- * `paf23ddna`       Transfer PAF results ot pairwise contacts for 3DDNA
- * `sam2frag-sam`    Transfer SAM results output by falign to fragment SAM mapping results
+* `SA:Z:` a homologous map of the fragment
 
 # <a name="S-sam-diff"></a> Difference between `read-SAM` and `frag-SAM`
 

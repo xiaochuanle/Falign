@@ -4,7 +4,8 @@
 #include <cmath>
 #include <vector>
 
-#include "../../algo/make_candidate_kmer_chain.h"
+#include "../../corelib/pdqsort.h"
+#include "make_candidate_kmer_chain.hpp"
 #include "trim_overlap_subseq.hpp"
 #include "extend_hit_list.hpp"
 #include "smooth_pca_list.hpp"
@@ -67,7 +68,7 @@ s_pick_hom_pca_kmer(const EChainType chain_type, PoreCAlign* hom_pca_a, int hom_
 {
     result->map_q = 0;
     const double chain_type_prob = s_map_q_p1(chain_type);
-    sort(hom_pca_a, hom_pca_a + hom_pca_c, [](const PoreCAlign& x, const PoreCAlign& y) { return x.chain_score > y.chain_score; });
+    pdqsort(hom_pca_a, hom_pca_a + hom_pca_c, [](const PoreCAlign& x, const PoreCAlign& y) { return x.chain_score > y.chain_score; });
     int s0 = hom_pca_a[0].chain_score;
     int s1 = hom_pca_a[1].chain_score;
     if (s0 - s1 > 1) {
@@ -105,7 +106,7 @@ s_pick_hom_pca_chr(const EChainType chain_type, PoreCAlign* hom_pca_a, int hom_p
             if (pi->sid == pj->sid) ++supp_list[i].supp;
         }
     }
-    sort(supp_list.begin(), supp_list.end(), [](const PcaSupportInfo& x, const PcaSupportInfo& y) { return x.supp > y.supp; });
+    pdqsort(supp_list.begin(), supp_list.end(), [](const PcaSupportInfo& x, const PcaSupportInfo& y) { return x.supp > y.supp; });
     int cnt0 = supp_list[0].supp;
     int cnt1 = supp_list[1].supp;
     if (cnt0 - cnt1 > 1) {
@@ -269,29 +270,39 @@ s_detect_hom_hits(HbnInitHit* hita, int hitc, int read_size)
 static void
 s_detect_candidates(MapThreadData* data, 
     const int qidx,
+    const u8* fwd_query,
+    const u8* rev_query,
+    const int query_size,
     vector<HbnInitHit>& hit_list,
     vector<SubjectInitHitInfo>& sbjct_hit_info_list)
 {
     hit_list.clear();
     sbjct_hit_info_list.clear();
 
-    const char* query_name = SeqReader_SeqName(data->queries, qidx);
-    const u8* fwd_query = SeqReader_Seq(data->queries, qidx, FWD);
-    const u8* rev_query = SeqReader_Seq(data->queries, qidx, REV);
-    const char* query_qv = SeqReader_QV(data->queries, qidx);
-    const int query_size = SeqReader_SeqSize(data->queries, qidx);
-    WordFinderThreadData* word_data = data->word_data;
-    hbn_ddfkm(word_data, qidx);
-    kv_dinit(vec_init_hit, l_hit_list);
+    vector<KmerMatch> km_list;
+    data->word_finder->extract_kmer_matches(qidx,
+        fwd_query,
+        rev_query,
+        query_size,
+        km_list,
+        data->gen,
+        data->dist);
+    vector<HbnInitHit> l_hit_list;
     SubjectInitHitInfo sbjct_hitinfo;
     vector<HbnKmerMatch> fwd_seeds, rev_seeds;
 
-    for (size_t skmi_i = 0; skmi_i < kv_size(word_data->skmi_list); ++skmi_i) {
-        SubjectKmInfo skmi = kv_A(word_data->skmi_list, skmi_i);
-        const int sid = skmi.sid;
-        DDFKmerMatch* kma = kv_data(word_data->ddfkm_list) + skmi.km_offset;
-        const int kmc = skmi.km_cnt;
-        const int subject_size = SeqReader_SeqSize(data->subjects, skmi.sid);
+    KmerMatch* all_kma = km_list.data();
+    size_t all_kmc = km_list.size();
+    size_t i = 0;
+    while (i < all_kmc) {
+        size_t j = i + 1;
+        while (j < all_kmc && all_kma[i].sid == all_kma[j].sid) ++j;
+        int sid = all_kma[i].sid;
+        KmerMatch* kma = all_kma + i;
+        int kmc = j - i;
+        i = j;
+        const int subject_size = data->subjects->SeqSize(sid);
+
         fwd_seeds.clear();
         rev_seeds.clear();
         for (int k = 0; k < kmc; ++k) {
@@ -299,21 +310,21 @@ s_detect_candidates(MapThreadData* data,
             hkm.qoff = kma[k].qoff;
             hkm.soff = kma[k].soff;
             hkm.length = data->opts->kmer_size;
-            if (kma[k].context & 1) {
+            if (kma[k].qdir == REV) {
                 rev_seeds.push_back(hkm);
             } else {
                 fwd_seeds.push_back(hkm);
             }
         }
 
-        sbjct_hitinfo.sid = skmi.sid;
+        sbjct_hitinfo.sid = sid;
         sbjct_hitinfo.max_score = 0;
         sbjct_hitinfo.hit_offset = hit_list.size();
         sbjct_hitinfo.hit_cnt = 0;
 
         HbnKmerMatch* hkma = fwd_seeds.data();
         int hkmc = fwd_seeds.size();
-        kv_clear(l_hit_list);
+        l_hit_list.clear();
         make_candidate_kmer_chain(hkma,
             hkmc,
             qidx,
@@ -324,11 +335,11 @@ s_detect_candidates(MapThreadData* data,
             data->opts->kmer_dist,
             data->opts->ddf,
             data->opts->chain_score,
-            &l_hit_list);
-        HbnInitHit* hit_array = kv_data(l_hit_list);
-        int hit_count = kv_size(l_hit_list);
+            l_hit_list);
+        HbnInitHit* hit_array = l_hit_list.data();
+        int hit_count = l_hit_list.size();
         for (int x = 0; x < hit_count; ++x) {
-            HbnInitHit hit = kv_A(l_hit_list, x);
+            HbnInitHit hit = l_hit_list[x];
             hit_list.push_back(hit);
             sbjct_hitinfo.hit_cnt++;
             sbjct_hitinfo.max_score = hbn_max(sbjct_hitinfo.max_score, hit.score);
@@ -336,7 +347,7 @@ s_detect_candidates(MapThreadData* data,
 
         hkma = rev_seeds.data();
         hkmc = rev_seeds.size();
-        kv_clear(l_hit_list);
+        l_hit_list.clear();
         make_candidate_kmer_chain(hkma,
             hkmc,
             qidx,
@@ -347,11 +358,11 @@ s_detect_candidates(MapThreadData* data,
             data->opts->kmer_dist,
             data->opts->ddf,
             data->opts->chain_score,
-            &l_hit_list);
-        hit_array = kv_data(l_hit_list);
-        hit_count = kv_size(l_hit_list);
+            l_hit_list);
+        hit_array = l_hit_list.data();
+        hit_count = l_hit_list.size();
         for (int x = 0; x < hit_count; ++x) {
-            HbnInitHit hit = kv_A(l_hit_list, x);
+            HbnInitHit hit = l_hit_list[x];
             hit_list.push_back(hit);
             sbjct_hitinfo.hit_cnt++;
             sbjct_hitinfo.max_score = hbn_max(sbjct_hitinfo.max_score, hit.score);
@@ -359,9 +370,8 @@ s_detect_candidates(MapThreadData* data,
 
         if (sbjct_hitinfo.hit_cnt > 0) sbjct_hit_info_list.push_back(sbjct_hitinfo);
     }
-    kv_destroy(l_hit_list);
 
-    sort(sbjct_hit_info_list.begin(), sbjct_hit_info_list.end(),
+    pdqsort(sbjct_hit_info_list.begin(), sbjct_hit_info_list.end(),
         [](const SubjectInitHitInfo& a, const SubjectInitHitInfo& b)->bool { return a.max_score > b.max_score; });
     s_detect_hom_hits(hit_list.data(), hit_list.size(), query_size);
 }
@@ -376,7 +386,7 @@ s_extend_gapped_filling_hits(HbnTracebackData* tbck_data,
     const u8* fwd_query,
     const u8* rev_query,
     const int query_size,
-    SeqReader* subjects,
+    HbnUnpackedDatabase* subjects,
     SubjectInitHitInfo* sihia,
     int sihic,
     HbnInitHit* hit_list,
@@ -394,12 +404,9 @@ s_extend_gapped_filling_hits(HbnTracebackData* tbck_data,
     for (int i = 0; i < sihic; ++i) {
         HbnInitHit* hita = hit_list + sihia[i].hit_offset;
         int hitc = sihia[i].hit_cnt;
-        int subject_id = hita[0].sid;
-        const u8* subject = SeqReader_Seq(subjects, subject_id, FWD);
-	    const int subject_size = SeqReader_SeqSize(subjects, subject_id);
         for (int p = 0; p < hitc; ++p) gf_hit_list.push_back(hita[p]);
     }
-    sort(gf_hit_list.begin(), gf_hit_list.end(), [](const HbnInitHit& a, const HbnInitHit& b) { return a.score > b.score; });
+    pdqsort(gf_hit_list.begin(), gf_hit_list.end(), [](const HbnInitHit& a, const HbnInitHit& b) { return a.score > b.score; });
     HbnInitHit* hita = gf_hit_list.data();
     int hitc = gf_hit_list.size();
     vector<PoreCAlign> l_pca_list;
@@ -419,8 +426,10 @@ s_extend_gapped_filling_hits(HbnTracebackData* tbck_data,
         ++extended_gf;
         l_pca_list.clear();
         int subject_id = hita[p].sid;
-        const u8* subject = SeqReader_Seq(subjects, subject_id, FWD);
-	    const int subject_size = SeqReader_SeqSize(subjects, subject_id);
+        const u8* subject = subjects->GetSequence(subject_id);
+        const int subject_size = subjects->SeqSize(subject_id);
+        //const u8* subject =  SeqReader_Seq(subjects, subject_id, FWD);
+	    //const int subject_size = SeqReader_SeqSize(subjects, subject_id);
         int qb = hita[p].qbeg;
         int qe = hita[p].qend;
         int sb = hita[p].sbeg;
@@ -437,30 +446,33 @@ s_extend_gapped_filling_hits(HbnTracebackData* tbck_data,
 }
 
 void
-align_one_read(MapThreadData* data, const int qidx, kstring_t* out)
+align_one_read(MapThreadData* data, 
+    const char* query_name,
+    const int query_id,
+    const u8* fwd_query,
+    const u8* rev_query,
+    const int query_size,
+    std::vector<PoreCAlign>& all_pca_list,
+    TrimPcaList& trim_pca_list)
 {
     const int verbose = 0;
-    const char* query_name = SeqReader_SeqName(data->queries, qidx);
-    const u8* fwd_query = SeqReader_Seq(data->queries, qidx, FWD);
-    const u8* rev_query = SeqReader_Seq(data->queries, qidx, REV);
-    const char* query_qv = SeqReader_QV(data->queries, qidx);
-    const int query_size = SeqReader_SeqSize(data->queries, qidx);
-
-    //HBN_LOG("mappig query %d:%s:%d", qidx, query_name, query_size);
+    //if (query_id != 209) return;
+    //HBN_LOG("mappig query %d:%s:%d", query_id, query_name, query_size);
+    all_pca_list.clear();
+    trim_pca_list.clear();
 
     vector<HbnInitHit> hit_list;
     vector<SubjectInitHitInfo> sbjct_hit_info_list;
-    s_detect_candidates(data, qidx, hit_list, sbjct_hit_info_list);
+    s_detect_candidates(data, query_id, fwd_query, rev_query, query_size, hit_list, sbjct_hit_info_list);
     SubjectInitHitInfo* shia = sbjct_hit_info_list.data();
     int shic = sbjct_hit_info_list.size();
     if (!shic) return;
 
     QueryVdfEndPointList_Setup(&data->qvep_list, &data->reloci_list->enzyme, fwd_query, rev_query, query_size);
-    const int* vdfa = kv_data(data->qvep_list.fwd_vdf_endpoint_list);
-    const int vdfc = kv_size(data->qvep_list.fwd_vdf_endpoint_list);
+    const int* vdfa = data->qvep_list.fwd_vdf_endpoint_list.data();
+    const int vdfc = data->qvep_list.fwd_vdf_endpoint_list.size();
     const int enzyme_size = data->reloci_list->enzyme.enzyme_size;
     EChainType chain_type;
-    vector<PoreCAlign> all_pca_list;
     vector<PoreCAlign> l_pca_list, l1_pca_list, chain, global_chain;
     int cov = 0;
 
@@ -469,19 +481,18 @@ align_one_read(MapThreadData* data, const int qidx, kstring_t* out)
         HbnInitHit* hita = hit_list.data() + shia[i].hit_offset;
         int hitc = shia[i].hit_cnt;
         int sid = hita[0].sid;
-        const char* sname = SeqReader_SeqName(data->subjects, sid);
-        //HBN_LOG("mapping %d hits for subject %d:%s, score = %d", hitc, sid, sname, shia[i].max_score);
+        const char* sname = data->subjects->SeqName(sid);
+        //HBN_LOG("mapping %d hits for subject %d:%s, score = %d, sid = %d", hitc, sid, sname, shia[i].max_score, shia[i].sid);
         l_pca_list.clear();
         extend_hit_list(data->tbck_data, 
             data->opts, 
             data->reloci_list, 
             &data->qvep_list, 
             data->subjects, 
-            qidx,
+            query_id,
             query_name,
             fwd_query,
-            rev_query,
-            query_qv,
+            rev_query,            
             query_size,
             hita,
             hitc,
@@ -496,8 +507,8 @@ align_one_read(MapThreadData* data, const int qidx, kstring_t* out)
             chain_type = ePerfectChain;
             smooth_pca_list(chain, chain_type, all_pca_list, data->subjects, query_name, fwd_query, rev_query, vdfa, vdfc, enzyme_size, data->tbck_data);
             s_set_map_q(chain_type, chain.data(), chain.size(), all_pca_list);
-            trim_overlap_subseqs(data->tbck_data, data->reloci_list, &data->qvep_list, data->subjects, query_name, qidx, fwd_query, rev_query, query_qv, query_size,
-                all_pca_list.data(), all_pca_list.size(), chain.data(), chain.size(), chain_type, 0, data->opts->outfmt, out);
+            trim_overlap_subseqs(data->tbck_data, data->reloci_list, &data->qvep_list, data->subjects, query_name, query_id, fwd_query, rev_query, query_size,
+                all_pca_list.data(), all_pca_list.size(), chain.data(), chain.size(), chain_type, trim_pca_list);
             return;
         }
     }
@@ -507,7 +518,7 @@ align_one_read(MapThreadData* data, const int qidx, kstring_t* out)
             data->opts,
             data->reloci_list,
             &data->qvep_list,
-            qidx,
+            query_id,
             query_name,
             fwd_query,
             rev_query,
@@ -525,8 +536,8 @@ align_one_read(MapThreadData* data, const int qidx, kstring_t* out)
         chain_type = ePerfectChain;
         smooth_pca_list(chain, chain_type, all_pca_list, data->subjects, query_name, fwd_query, rev_query, vdfa, vdfc, enzyme_size, data->tbck_data);
         s_set_map_q(chain_type, chain.data(), chain.size(), all_pca_list);
-        trim_overlap_subseqs(data->tbck_data, data->reloci_list, &data->qvep_list, data->subjects, query_name, qidx, fwd_query, rev_query, query_qv, query_size,
-            all_pca_list.data(), all_pca_list.size(), chain.data(), chain.size(), chain_type, 0, data->opts->outfmt, out);
+        trim_overlap_subseqs(data->tbck_data, data->reloci_list, &data->qvep_list, data->subjects, query_name, query_id, fwd_query, rev_query, query_size,
+            all_pca_list.data(), all_pca_list.size(), chain.data(), chain.size(), chain_type, trim_pca_list);
         return;
     }
 
@@ -535,7 +546,7 @@ align_one_read(MapThreadData* data, const int qidx, kstring_t* out)
     int pca_c = 0;
     pca_a = all_pca_list.data();
     pca_c = all_pca_list.size();
-    sort(pca_a, pca_a + pca_c, [](const PoreCAlign& a, const PoreCAlign& b) { return a.sid < b.sid; });
+    pdqsort(pca_a, pca_a + pca_c, [](const PoreCAlign& a, const PoreCAlign& b) { return a.sid < b.sid; });
     vector<PoreCAlign> best_chain;
     int max_cov = 0;
     int i = 0;
@@ -572,19 +583,16 @@ align_one_read(MapThreadData* data, const int qidx, kstring_t* out)
                     &data->qvep_list,
                     data->subjects,
                     query_name,
-                    qidx,
+                    query_id,
                     fwd_query,
                     rev_query,
-                    query_qv,
                     query_size,
                     all_pca_list.data(),
                     all_pca_list.size(),
                     global_chain.data(),
                     global_chain.size(),
                     chain_type,
-                    0,
-                    data->opts->outfmt,
-                    out); 
+                    trim_pca_list); 
                 return;               
             }
         }
@@ -596,19 +604,16 @@ align_one_read(MapThreadData* data, const int qidx, kstring_t* out)
                 &data->qvep_list,
                 data->subjects,
                 query_name,
-                qidx,
+                query_id,
                 fwd_query,
                 rev_query,
-                query_qv,
                 query_size,
                 all_pca_list.data(),
                 all_pca_list.size(),
                 best_chain.data(),
                 best_chain.size(),
                 chain_type,
-                0,
-                data->opts->outfmt,
-                out);
+                trim_pca_list);
         return;
     }
 
@@ -618,8 +623,8 @@ align_one_read(MapThreadData* data, const int qidx, kstring_t* out)
         chain_type = eCompleteChain;
         smooth_pca_list(chain, chain_type, all_pca_list, data->subjects, query_name, fwd_query, rev_query, vdfa, vdfc, enzyme_size, data->tbck_data);
         s_set_map_q(chain_type, chain.data(), chain.size(), all_pca_list);
-        trim_overlap_subseqs(data->tbck_data, data->reloci_list, &data->qvep_list, data->subjects, query_name, qidx, fwd_query, rev_query, query_qv, query_size,
-            all_pca_list.data(), all_pca_list.size(), chain.data(), chain.size(), chain_type, 0, data->opts->outfmt, out);
+        trim_overlap_subseqs(data->tbck_data, data->reloci_list, &data->qvep_list, data->subjects, query_name, query_id, fwd_query, rev_query, query_size,
+            all_pca_list.data(), all_pca_list.size(), chain.data(), chain.size(), chain_type, trim_pca_list);
         return;
     }
 
@@ -629,8 +634,8 @@ align_one_read(MapThreadData* data, const int qidx, kstring_t* out)
         chain_type = eMaxCovChain;
         smooth_pca_list(chain, chain_type, all_pca_list, data->subjects, query_name, fwd_query, rev_query, vdfa, vdfc, enzyme_size, data->tbck_data);
         s_set_map_q(chain_type, chain.data(), chain.size(), all_pca_list);
-        trim_overlap_subseqs(data->tbck_data, data->reloci_list, &data->qvep_list, data->subjects, query_name, qidx, fwd_query, rev_query, query_qv, query_size,
-            all_pca_list.data(), all_pca_list.size(), chain.data(), chain.size(), chain_type, 0, data->opts->outfmt, out);
+        trim_overlap_subseqs(data->tbck_data, data->reloci_list, &data->qvep_list, data->subjects, query_name, query_id, fwd_query, rev_query, query_size,
+            all_pca_list.data(), all_pca_list.size(), chain.data(), chain.size(), chain_type, trim_pca_list);
         return;
     }
 }

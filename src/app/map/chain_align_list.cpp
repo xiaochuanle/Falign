@@ -1,8 +1,8 @@
 #include "chain_align_list.hpp"
+#include "../../corelib/pdqsort.h"
 
 using namespace std;
 
-#include <algorithm>
 #include <array>
 #include <vector>
 
@@ -112,7 +112,7 @@ void remove_contained_pca(PoreCAlign* pca_a, int* _pca_c)
     for (int i = 0; i < pca_c; ++i) if (pca_a[i].qid >= 0) pca_a[n++] = pca_a[i];
     pca_c = n;
 
-    sort(pca_a, pca_a + pca_c, 
+    pdqsort(pca_a, pca_a + pca_c, 
         [](const PoreCAlign& a, const PoreCAlign& b) { return (a.chain_qoff < b.chain_qoff) || (a.chain_qoff == b.chain_qoff && a.chain_qend > b.chain_qend); });
     int i = 0;
     while (i < pca_c) {
@@ -139,7 +139,7 @@ void remove_contained_pca(std::vector<PoreCAlign>& pca_list)
 void remove_duplicate_pca(PoreCAlign* pca_a, int* pca_c_)
 {
     int pca_c = *pca_c_;
-    sort(pca_a, pca_a + pca_c,
+    pdqsort(pca_a, pca_a + pca_c,
         [](const PoreCAlign& a, const PoreCAlign& b)->bool {
             return a.qc > b.qc;
     });
@@ -958,7 +958,7 @@ static bool
 x_select_pca_chain_greedy(PoreCAlign* pca_a, int pca_c, vector<PoreCAlign>& chain)
 {
     chain.clear();
-    sort(pca_a, pca_a + pca_c, [](const PoreCAlign& x, const PoreCAlign& y) { return x.qc > y.qc; });
+    pdqsort(pca_a, pca_a + pca_c, [](const PoreCAlign& x, const PoreCAlign& y) { return x.qc > y.qc; });
     for (int i = 0; i < pca_c; ++i) {
         PoreCAlign* pi = pca_a + i;
         bool has_overlap = false;
@@ -975,7 +975,7 @@ x_select_pca_chain_greedy(PoreCAlign* pca_a, int pca_c, vector<PoreCAlign>& chai
         }
         if (!has_overlap) chain.push_back(*pi);
     }
-    sort(chain.begin(), chain.end(), [](const PoreCAlign& x, const PoreCAlign& y) { return x.chain_qoff < y.chain_qoff; });
+    pdqsort(chain.begin(), chain.end(), [](const PoreCAlign& x, const PoreCAlign& y) { return x.chain_qoff < y.chain_qoff; });
     return true;
 }
 
@@ -990,7 +990,7 @@ select_pca_chain(PoreCAlignChainData* pca_chain_data,
     int* cov)
 {
     if (pca_count == 0) return 0;
-    sort(pca_array, pca_array + pca_count, [](const PoreCAlign& a, const PoreCAlign& b)->bool { return a.chain_qoff < b.chain_qoff; });
+    pdqsort(pca_array, pca_array + pca_count, [](const PoreCAlign& a, const PoreCAlign& b)->bool { return a.chain_qoff < b.chain_qoff; });
 
 #if 0
     HBN_LOG("org pca list");
@@ -1020,7 +1020,7 @@ select_pca_chain(PoreCAlignChainData* pca_chain_data,
     }
 
 #if 1
-    sort(pca_a, pca_a + pca_c, [](const PoreCAlign& x, const PoreCAlign& y) { return x.score > y.score; });
+    pdqsort(pca_a, pca_a + pca_c, [](const PoreCAlign& x, const PoreCAlign& y) { return x.score > y.score; });
 	const int E1 = 40, E2 = 40;
     for (int i = 0; i < pca_c; ++i) {
         PoreCAlign* pi = pca_a + i;
@@ -1050,7 +1050,7 @@ select_pca_chain(PoreCAlignChainData* pca_chain_data,
     if (pca_list.empty()) return 0;
     pca_a = pca_list.data();
     pca_c = pca_list.size();
-    sort(pca_a, pca_a + pca_c, [](const PoreCAlign& a, const PoreCAlign& b)->bool { return a.chain_qoff < b.chain_qoff; });
+    pdqsort(pca_a, pca_a + pca_c, [](const PoreCAlign& a, const PoreCAlign& b)->bool { return a.chain_qoff < b.chain_qoff; });
 #endif
     for (int i = 0; i < pca_c; ++i) {
         pca_a[i].qc = pca_a[i].chain_qend - pca_a[i].chain_qoff;

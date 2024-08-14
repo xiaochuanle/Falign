@@ -2,47 +2,41 @@
 
 #include "align_one_read.hpp"
 #include "trim_overlap_subseq.hpp"
-#include "../../algo/hbn_traceback_aux.h"
 
 #include <algorithm>
 #include <vector>
 
 using namespace std;
 
-static const int kQueryBatchSize = 10;
-
 MapThreadData*
 MapThreadDataNew(int thread_id,
-    SeqReader* subjects,
-    SeqReader* queries,
-    HbnLookupTable* lktbl,
+    HbnUnpackedDatabase* subjects,
+    HbnUnpackedDatabase* queries,
+    HbnWordFinder* word_finder,
     const HbnProgramOptions* opts,
     RestrictEnzymeLociList* reloci_list,
+    size_t query_id_offset,
     int* qidx,
     pthread_mutex_t* qidx_lock,
-    FILE* out,
-    pthread_mutex_t* out_lock)
+    HbnOutputs* out)
 {
-    MapThreadData* data = (MapThreadData*)calloc(1, sizeof(MapThreadData));
+    MapThreadData* data = new MapThreadData();
     data->thread_id = thread_id;
     data->subjects = subjects;
     data->queries = queries;
-    data->lktbl = lktbl;
+    data->word_finder = word_finder;
     data->opts = opts;
-    data->word_data = WordFinderThreadDataNew(queries,
-            lktbl,
-            opts->kmer_size,
-            1,
-            opts->chain_score,
-            opts->ddf);
-    data->tbck_data = HbnTracebackDataNew();
+    data->tbck_data = new HbnTracebackData();
     data->reloci_list = reloci_list;
-    QueryVdfEndPointList_Init(&data->qvep_list);
     data->pca_chain_data = new PoreCAlignChainData();
+    data->query_id_offset = query_id_offset;
     data->qidx = qidx;
     data->qidx_lock = qidx_lock;
     data->out = out;
-    data->out_lock = out_lock;
+
+    random_device rd;
+    data->gen = new mt19937(rd());
+    data->dist = new uniform_int_distribution<>(0, 1);
 
     return data;
 }
@@ -50,67 +44,144 @@ MapThreadDataNew(int thread_id,
 MapThreadData*
 MapThreadDataFree(MapThreadData* data)
 {
-    data->word_data = WordFinderThreadDataFree(data->word_data);
-    data->tbck_data = HbnTracebackDataFree(data->tbck_data);
-    QueryVdfEndPointList_Destroy(&data->qvep_list);
+    delete data->gen;
+    delete data->dist;
+    delete data->tbck_data;
     delete data->pca_chain_data;
-    free(data);
+    delete data;
     return NULL;
 }
 
-static BOOL
-MapThreadData_GetNextQueryBatch(MapThreadData* data, int* _qidx_from, int* _qidx_to)
+static inline int
+MapThreadData_GetNextQuery(MapThreadData* data)
 {
-    int from = 0, to = 0;
-    const int num_queries = SeqReader_NumSeqs(data->queries);
+    int qidx = -1;
+    const int num_queries = data->queries->NumSeqs();
     pthread_mutex_lock(data->qidx_lock);
-    from = *data->qidx;
-    *data->qidx += kQueryBatchSize;
+    qidx = *data->qidx;
+    *data->qidx += 1;
     pthread_mutex_unlock(data->qidx_lock);
-    if (from >= num_queries) return FALSE;
-    to = hbn_min(from + kQueryBatchSize, num_queries);
-    *_qidx_from = from;
-    *_qidx_to = to;
-    return TRUE;
+    if (qidx >= num_queries) qidx = -1;
+    return qidx;
+}
+
+static void
+s_setup_query_sequences(const u8* fwd_query, 
+    const char* raw_qv,
+    const int query_size,
+    vector<u8>& _rev_query,
+    const u8*& rev_query,
+    vector<char>& _fwd_qv,
+    const char*& fwd_qv,
+    vector<char>& _rev_qv,
+    const char*& rev_qv,
+    vector<char>& _fwd_raw_query,
+    const char*& fwd_raw_query,
+    vector<char>& _rev_raw_query,
+    const char*& rev_raw_query)
+{
+    _rev_query.assign(fwd_query, fwd_query + query_size);
+    reverse(_rev_query.begin(), _rev_query.end());
+    for (auto& c : _rev_query) c = 3 - c;
+    rev_query = _rev_query.data();
+
+    fwd_qv = nullptr;
+    if (raw_qv) {
+        _fwd_qv.assign(raw_qv, raw_qv + query_size);
+        for (auto& c : _fwd_qv) c -= 33;
+        fwd_qv = _fwd_qv.data();
+    }
+
+    rev_qv = nullptr;
+    if (raw_qv) {
+        _rev_qv.assign(_fwd_qv.rbegin(), _fwd_qv.rend());
+        rev_qv = _rev_qv.data();
+    }
+
+    _fwd_raw_query.clear();
+    _rev_raw_query.clear();
+    for (int i = 0; i < query_size; ++i) {
+        int fc = fwd_query[i];
+        _fwd_raw_query.push_back(DECODE_RESIDUE(fc));
+        int rc = rev_query[i];
+        _rev_raw_query.push_back(DECODE_RESIDUE(rc));
+    }
+    fwd_raw_query = _fwd_raw_query.data();
+    rev_raw_query = _rev_raw_query.data();
 }
 
 static void*
 s_map_thread(void* params)
 {
     MapThreadData* data = (MapThreadData*)(params);
-    int qidx_from, qidx_to;
-    ks_dinit(out_buf);
-    while (MapThreadData_GetNextQueryBatch(data, &qidx_from, &qidx_to)) {
-        for (int i = qidx_from; i < qidx_to; ++i) {
-            align_one_read(data, i, &out_buf);
+    vector<PoreCAlign> all_pca_list;
+    TrimPcaList trim_pca_list;
+
+    const char* query_name;
+    int query_id;
+    const u8* fwd_query;
+    const char* raw_qv;
+    vector<u8> _rev_query;
+    vector<char> _fwd_qv;
+    vector<char> _rev_qv;
+    vector<char> _fwd_raw_query;
+    vector<char> _rev_raw_query;
+    const u8* rev_query;
+    const char* fwd_qv;
+    const char* rev_qv;
+    const char* fwd_raw_query;
+    const char* rev_raw_query;
+
+    int soa_cnt = 0;
+    while ((query_id = MapThreadData_GetNextQuery(data)) != -1) {
+        query_name = data->queries->SeqName(query_id);
+        fwd_query = data->queries->GetSequence(query_id);
+        raw_qv = data->queries->GetBaseQualities(query_id);
+        const int query_size = data->queries->SeqSize(query_id);
+        s_setup_query_sequences(fwd_query, raw_qv, query_size,
+            _rev_query, rev_query,
+            _fwd_qv, fwd_qv,
+            _rev_qv, rev_qv,
+            _fwd_raw_query, fwd_raw_query,
+            _rev_raw_query, rev_raw_query);
+        align_one_read(data, query_name, query_id, fwd_query, rev_query, query_size, all_pca_list, trim_pca_list);
+        query_id += data->query_id_offset;
+        data->out->dump(data->reloci_list,
+            data->subjects,
+            query_name,
+            query_id,
+            fwd_raw_query,
+            rev_raw_query,
+            fwd_qv,
+            rev_qv,
+            query_size,
+            all_pca_list.data(),
+            all_pca_list.size(),
+            trim_pca_list);
+        if (++soa_cnt == 10)  {
+            data->pca_chain_data->release_soa();
+            soa_cnt = 0;
         }
-        pthread_mutex_lock(data->out_lock);
-        hbn_fwrite(ks_s(out_buf), 1, ks_size(out_buf), data->out);
-        pthread_mutex_unlock(data->out_lock);
-        ks_clear(out_buf);
-        data->pca_chain_data->release_soa();
-        //if ((qidx_to % 1000) == 0) HBN_LOG("%d queries mapped", qidx_to);
     }
-    ks_destroy(out_buf);
     return NULL;
 }
 
 void
-map_one_volume(SeqReader* subjects, 
-    SeqReader* queries,
-    HbnLookupTable* lktbl,
+map_one_volume(HbnUnpackedDatabase* subjects, 
+    HbnUnpackedDatabase* queries,
+    HbnWordFinder* word_finder,
     const HbnProgramOptions* opts,
     RestrictEnzymeLociList* reloci_list,
-    FILE* out)
+    const size_t query_id_offset,
+    HbnOutputs* out)
 {
     const int num_threads = opts->num_threads;
     MapThreadData* data_array[num_threads];
     pthread_t jobids[num_threads];
     int qidx = 0;
     pthread_mutex_t qidx_lock = PTHREAD_MUTEX_INITIALIZER;
-    pthread_mutex_t out_lock = PTHREAD_MUTEX_INITIALIZER;
     for (int i = 0; i < num_threads; ++i) {
-        data_array[i] = MapThreadDataNew(i, subjects, queries, lktbl, opts, reloci_list, &qidx, &qidx_lock, out, &out_lock);
+        data_array[i] = MapThreadDataNew(i, subjects, queries, word_finder, opts, reloci_list, query_id_offset, &qidx, &qidx_lock, out);
     }
     for (int i = 0; i < num_threads; ++i) {
         pthread_create(jobids + i, NULL, s_map_thread, data_array[i]);
